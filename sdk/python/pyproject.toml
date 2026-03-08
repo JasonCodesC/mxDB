@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mxdb"
+version = "0.1.0"
+description = "Thin Python SDK for the mxDB bitemporal feature engine"
+requires-python = ">=3.10"
+readme = "README.md"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mxdb = ["bin/featurectl", "bin/featurectl.exe"]
