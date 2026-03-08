@@ -1,0 +1,18 @@
+# mxDB engine configuration
+
+data_dir=./data
+metadata_path=./data/catalog/metadata.db
+wal_dir=./data/wal
+segment_dir=./data/segments
+manifest_path=./data/manifest/manifest.log
+checkpoint_path=./data/checkpoints/checkpoint.meta
+
+partition_count=8
+memtable_flush_event_threshold=2048
+
+wal_segment_target_bytes=16777216
+wal_group_commit_max_records=1024
+wal_group_commit_window_ms=5
+
+# true => sync mode, false => group commit mode
+default_durability_sync=false
