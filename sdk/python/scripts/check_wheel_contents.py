@@ -19,9 +19,9 @@ def main() -> int:
         return any(name.endswith(suffix) for name in names)
 
     wanted_suffixes = [
-        "/mxdb/client.py",
-        "/mxdb/_binary.py",
-        "/mxdb/bin/featurectl",
+        "mxdb/client.py",
+        "mxdb/_binary.py",
+        "mxdb/bin/featurectl.gz",
     ]
 
     missing = [suffix for suffix in wanted_suffixes if not has_suffix(suffix)]

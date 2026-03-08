@@ -16,4 +16,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-mxdb = ["bin/featurectl", "bin/featurectl.exe"]
+mxdb = ["bin/featurectl.gz", "bin/featurectl.exe.gz"]
