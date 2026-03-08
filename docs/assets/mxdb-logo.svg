@@ -1,0 +1,41 @@
+<svg width="840" height="220" viewBox="0 0 840 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="mxDB logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="100%" stop-color="#1b2b44"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14b8a6"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="1" y="1" width="838" height="218" rx="22" fill="url(#bg)" stroke="#22334f" stroke-width="2"/>
+
+  <g transform="translate(44,36)">
+    <rect x="0" y="0" width="148" height="148" rx="18" fill="#0f1a2f" stroke="#2a4266"/>
+
+    <polyline points="24,118 52,78 78,104 106,62 126,86" fill="none" stroke="url(#accent)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+    <circle cx="24" cy="118" r="6" fill="#14b8a6"/>
+    <circle cx="52" cy="78" r="6" fill="#19c3b1"/>
+    <circle cx="78" cy="104" r="6" fill="#23c4c6"/>
+    <circle cx="106" cy="62" r="6" fill="#31c2df"/>
+    <circle cx="126" cy="86" r="6" fill="#38bdf8"/>
+
+    <text x="74" y="36" text-anchor="middle" fill="#9fb4d8" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="16">event/system</text>
+    <text x="74" y="56" text-anchor="middle" fill="#9fb4d8" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="16">time</text>
+  </g>
+
+  <g transform="translate(230,52)">
+    <text x="0" y="58" fill="#f8fafc" font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="82" font-weight="700">mxDB</text>
+    <text x="4" y="98" fill="#67e8f9" font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="24" font-weight="600">Bitemporal Feature Engine</text>
+    <text x="4" y="132" fill="#a7b9d4" font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="20">Durable writes. Correct as-of reads. Practical ML serving.</text>
+  </g>
+</svg>
