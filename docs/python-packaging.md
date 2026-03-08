@@ -32,6 +32,7 @@ Workflow: `.github/workflows/python-wheels.yml`
 - runs `sdk/python/scripts/build_featurectl_for_wheel.py` before wheel build
 - validates wheel import and binary resolution
 - on `v*` tags, publishes wheels + sdist to PyPI using trusted publishing
+- wheel build step is retried automatically for transient upstream rate limits/errors
 
 ## Publish
 
