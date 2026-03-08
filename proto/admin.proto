@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package bitemporal.feature.v1;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option cc_enable_arenas = true;
+
+message HealthStatus {
+  HealthState state = 1;
+  uint64 current_lsn = 2;
+  uint64 manifest_version = 3;
+  bool read_only = 4;
+  repeated string warnings = 5;
+}
+
+message TriggerCheckpointRequest {
+  RequestContext context = 1;
+  bool wait = 2;
+}
+
+message TriggerCheckpointResponse {
+  uint64 checkpoint_lsn = 1;
+  google.protobuf.Timestamp completed_at = 2;
+}
+
+message CompactionStatus {
+  uint32 queued_tasks = 1;
+  uint32 running_tasks = 2;
+  uint64 bytes_pending = 3;
+  google.protobuf.Timestamp last_success_at = 4;
+}
+
+message BackupRequest {
+  RequestContext context = 1;
+  string destination_uri = 2;
+}
+
+message BackupResponse {
+  string backup_id = 1;
+  JobState state = 2;
+}
+
+message RestoreRequest {
+  RequestContext context = 1;
+  string source_uri = 2;
+  bool start_read_only = 3;
+}
+
+message SetReadOnlyModeRequest {
+  RequestContext context = 1;
+  bool read_only = 2;
+}
+
+service AdminService {
+  rpc GetHealth(google.protobuf.Empty) returns (HealthStatus);
+  rpc TriggerCheckpoint(TriggerCheckpointRequest) returns (TriggerCheckpointResponse);
+  rpc GetCompactionStatus(google.protobuf.Empty) returns (CompactionStatus);
+  rpc StartBackup(BackupRequest) returns (BackupResponse);
+  rpc RestoreBackup(RestoreRequest) returns (BackupResponse);
+  rpc SetReadOnlyMode(SetReadOnlyModeRequest) returns (google.protobuf.Empty);
+}

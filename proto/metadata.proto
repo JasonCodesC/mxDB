@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package bitemporal.feature.v1;
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+option cc_enable_arenas = true;
+
+message FeatureDefinition {
+  string tenant_id = 1;
+  string feature_id = 2;
+  string feature_name = 3;
+  string entity_type = 4;
+  ValueType value_type = 5;
+  bool serving_enabled = 6;
+  bool historical_enabled = 7;
+  bool allow_external_system_time = 8;
+  bool nullable = 9;
+  string description = 10;
+  string owner = 11;
+  repeated string tags = 12;
+  string retention_policy_id = 13;
+  string freshness_sla = 14;
+  google.protobuf.Timestamp created_at = 15;
+  google.protobuf.Timestamp updated_at = 16;
+}
+
+message FeatureGroup {
+  string tenant_id = 1;
+  string group_id = 2;
+  string group_name = 3;
+  string entity_type = 4;
+  repeated FeatureRef features = 5;
+  string description = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message CreateFeatureRequest {
+  RequestContext context = 1;
+  FeatureDefinition feature = 2;
+}
+
+message CreateFeatureResponse {
+  FeatureDefinition feature = 1;
+}
+
+message UpdateFeatureRequest {
+  RequestContext context = 1;
+  FeatureDefinition feature = 2;
+}
+
+message UpdateFeatureResponse {
+  FeatureDefinition feature = 1;
+}
+
+message GetFeatureRequest {
+  RequestContext context = 1;
+  string tenant_id = 2;
+  FeatureRef feature = 3;
+}
+
+message GetFeatureResponse {
+  FeatureDefinition feature = 1;
+}
+
+message ListFeaturesRequest {
+  RequestContext context = 1;
+  string tenant_id = 2;
+  string entity_type = 3;
+  Pagination pagination = 4;
+}
+
+message ListFeaturesResponse {
+  repeated FeatureDefinition features = 1;
+  string next_page_token = 2;
+}
+
+message CreateFeatureGroupRequest {
+  RequestContext context = 1;
+  FeatureGroup group = 2;
+}
+
+message CreateFeatureGroupResponse {
+  FeatureGroup group = 1;
+}
+
+service MetadataService {
+  rpc CreateFeature(CreateFeatureRequest) returns (CreateFeatureResponse);
+  rpc UpdateFeature(UpdateFeatureRequest) returns (UpdateFeatureResponse);
+  rpc GetFeature(GetFeatureRequest) returns (GetFeatureResponse);
+  rpc ListFeatures(ListFeaturesRequest) returns (ListFeaturesResponse);
+  rpc CreateFeatureGroup(CreateFeatureGroupRequest) returns (CreateFeatureGroupResponse);
+}

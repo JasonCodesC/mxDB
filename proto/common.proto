@@ -1,0 +1,167 @@
+syntax = "proto3";
+
+package bitemporal.feature.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option cc_enable_arenas = true;
+
+enum ValueType {
+  VALUE_TYPE_UNSPECIFIED = 0;
+  VALUE_TYPE_BOOL = 1;
+  VALUE_TYPE_INT64 = 2;
+  VALUE_TYPE_DOUBLE = 3;
+  VALUE_TYPE_STRING = 4;
+  VALUE_TYPE_FLOAT_VECTOR = 5;
+  VALUE_TYPE_DOUBLE_VECTOR = 6;
+}
+
+enum OperationType {
+  OPERATION_TYPE_UNSPECIFIED = 0;
+  OPERATION_TYPE_UPSERT = 1;
+  OPERATION_TYPE_DELETE = 2;
+}
+
+enum DurabilityMode {
+  DURABILITY_MODE_UNSPECIFIED = 0;
+  DURABILITY_SYNC = 1;
+  DURABILITY_GROUP_COMMIT = 2;
+  DURABILITY_ASYNC = 3;
+}
+
+enum ConsistencyMode {
+  CONSISTENCY_MODE_UNSPECIFIED = 0;
+  CONSISTENCY_LATEST_VISIBLE = 1;
+  CONSISTENCY_AT_LEAST_LSN = 2;
+  CONSISTENCY_BEST_EFFORT_FRESH = 3;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_PENDING = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_SUCCEEDED = 3;
+  JOB_STATE_FAILED = 4;
+  JOB_STATE_CANCELLED = 5;
+}
+
+enum HealthState {
+  HEALTH_STATE_UNSPECIFIED = 0;
+  HEALTH_HEALTHY = 1;
+  HEALTH_DEGRADED_WRITES = 2;
+  HEALTH_DEGRADED_READS = 3;
+  HEALTH_COMPACTION_BACKLOG = 4;
+  HEALTH_RECOVERING = 5;
+  HEALTH_READ_ONLY = 6;
+}
+
+enum OutputFormat {
+  OUTPUT_FORMAT_UNSPECIFIED = 0;
+  OUTPUT_FORMAT_ARROW_FILE = 1;
+  OUTPUT_FORMAT_ARROW_STREAM = 2;
+  OUTPUT_FORMAT_PARQUET = 3;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_INVALID_ARGUMENT = 1;
+  ERROR_NOT_FOUND = 2;
+  ERROR_ALREADY_EXISTS = 3;
+  ERROR_PERMISSION_DENIED = 4;
+  ERROR_UNAUTHENTICATED = 5;
+  ERROR_OVERLOADED = 6;
+  ERROR_RATE_LIMITED = 7;
+  ERROR_TEMPORAL_CONFLICT = 8;
+  ERROR_SCHEMA_MISMATCH = 9;
+  ERROR_STALE_READ = 10;
+  ERROR_SNAPSHOT_EXPIRED = 11;
+  ERROR_INTERNAL = 12;
+}
+
+message RequestContext {
+  string request_id = 1;
+  string caller = 2;
+  string trace_id = 3;
+  string auth_principal = 4;
+}
+
+message TenantRef {
+  string tenant_id = 1;
+}
+
+message EntityKey {
+  string tenant_id = 1;
+  string entity_type = 2;
+  string entity_id = 3;
+}
+
+message FeatureRef {
+  oneof ref {
+    string feature_id = 1;
+    string feature_name = 2;
+  }
+}
+
+message CommitToken {
+  uint64 lsn = 1;
+  google.protobuf.Timestamp commit_system_time = 2;
+}
+
+message SnapshotToken {
+  uint64 manifest_version = 1;
+  uint64 max_visible_lsn = 2;
+  google.protobuf.Timestamp system_cutoff = 3;
+}
+
+message QualityFlags {
+  bool is_corrected = 1;
+  bool is_inferred = 2;
+  bool is_stale = 3;
+  bool source_validation_failed = 4;
+  repeated string tags = 5;
+}
+
+message NullValue {}
+
+message FloatVector {
+  uint32 dimension = 1;
+  repeated float values = 2;
+}
+
+message DoubleVector {
+  uint32 dimension = 1;
+  repeated double values = 2;
+}
+
+message FeatureValue {
+  ValueType value_type = 1;
+  oneof value {
+    bool bool_value = 2;
+    int64 int64_value = 3;
+    double double_value = 4;
+    string string_value = 5;
+    FloatVector float_vector_value = 6;
+    DoubleVector double_vector_value = 7;
+    NullValue null_value = 8;
+  }
+}
+
+message FeatureValueResult {
+  FeatureRef feature = 1;
+  FeatureValue value = 2;
+  google.protobuf.Timestamp event_time = 3;
+  google.protobuf.Timestamp system_time = 4;
+  QualityFlags quality_flags = 5;
+  bool found = 6;
+}
+
+message ErrorDetail {
+  ErrorCode code = 1;
+  string message = 2;
+  string retry_hint = 3;
+}
+
+message Pagination {
+  uint32 page_size = 1;
+  string page_token = 2;
+}

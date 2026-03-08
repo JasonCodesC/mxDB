@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package bitemporal.feature.v1;
+
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option cc_enable_arenas = true;
+
+message AsOfLookupRow {
+  EntityKey entity = 1;
+  repeated FeatureRef features = 2;
+  google.protobuf.Timestamp event_cutoff = 3;
+  google.protobuf.Timestamp system_cutoff = 4;
+}
+
+message AsOfLookupRequest {
+  RequestContext context = 1;
+  repeated AsOfLookupRow rows = 2;
+  SnapshotToken snapshot = 3;
+}
+
+message AsOfLookupResult {
+  EntityKey entity = 1;
+  google.protobuf.Timestamp event_cutoff = 2;
+  google.protobuf.Timestamp system_cutoff = 3;
+  repeated FeatureValueResult features = 4;
+}
+
+message AsOfLookupResponse {
+  repeated AsOfLookupResult results = 1;
+}
+
+message WindowScanRequest {
+  RequestContext context = 1;
+  EntityKey entity = 2;
+  FeatureRef feature = 3;
+  google.protobuf.Timestamp event_start = 4;
+  google.protobuf.Timestamp event_end = 5;
+  google.protobuf.Timestamp system_cutoff = 6;
+  SnapshotToken snapshot = 7;
+}
+
+message WindowScanResponse {
+  repeated FeatureValueResult values = 1;
+}
+
+message DrivingTableRef {
+  string uri = 1;
+  string format = 2;
+  string row_id_column = 3;
+  string entity_id_column = 4;
+  string event_time_column = 5;
+  string system_time_column = 6;
+}
+
+message BuildTrainingDatasetRequest {
+  RequestContext context = 1;
+  string tenant_id = 2;
+  string entity_type = 3;
+  DrivingTableRef driving_table = 4;
+  repeated FeatureRef features = 5;
+  google.protobuf.Timestamp default_system_cutoff = 6;
+  OutputFormat output_format = 7;
+  string output_uri = 8;
+  SnapshotToken snapshot = 9;
+}
+
+message BuildTrainingDatasetResponse {
+  string job_id = 1;
+  JobState state = 2;
+}
+
+message GetDatasetJobRequest {
+  RequestContext context = 1;
+  string job_id = 2;
+}
+
+message DatasetJobStatus {
+  string job_id = 1;
+  JobState state = 2;
+  SnapshotToken snapshot = 3;
+  uint64 rows_processed = 4;
+  uint64 rows_output = 5;
+  string output_uri = 6;
+  ErrorDetail error = 7;
+}
+
+message CancelDatasetJobRequest {
+  RequestContext context = 1;
+  string job_id = 2;
+}
+
+service HistoricalQueryService {
+  rpc AsOfLookup(AsOfLookupRequest) returns (AsOfLookupResponse);
+  rpc WindowScan(WindowScanRequest) returns (WindowScanResponse);
+  rpc BuildTrainingDataset(BuildTrainingDatasetRequest) returns (BuildTrainingDatasetResponse);
+  rpc GetDatasetJob(GetDatasetJobRequest) returns (DatasetJobStatus);
+  rpc CancelDatasetJob(CancelDatasetJobRequest) returns (google.protobuf.Empty);
+}

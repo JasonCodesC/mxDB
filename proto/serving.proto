@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package bitemporal.feature.v1;
+
+import "common.proto";
+import "google/protobuf/duration.proto";
+
+option cc_enable_arenas = true;
+
+message EntityFeatureVector {
+  EntityKey entity = 1;
+  string feature_group_id = 2;
+  repeated FeatureValueResult features = 3;
+  CommitToken visible_commit = 4;
+}
+
+message GetLatestFeaturesRequest {
+  RequestContext context = 1;
+  string tenant_id = 2;
+  string entity_type = 3;
+  repeated string entity_ids = 4;
+  repeated FeatureRef features = 5;
+  repeated string feature_group_ids = 6;
+  google.protobuf.Duration freshness_requirement = 7;
+  ConsistencyMode consistency_mode = 8;
+  uint64 min_visible_lsn = 9;
+}
+
+message GetLatestFeaturesResponse {
+  repeated EntityFeatureVector vectors = 1;
+}
+
+message SharedMemoryDescriptor {
+  string region_name = 1;
+  uint64 offset = 2;
+  uint64 length = 3;
+  uint64 published_version = 4;
+  string encoding = 5;
+}
+
+message GetSharedMemoryVectorRequest {
+  RequestContext context = 1;
+  EntityKey entity = 2;
+  string feature_group_id = 3;
+  uint64 min_visible_lsn = 4;
+}
+
+message GetSharedMemoryVectorResponse {
+  SharedMemoryDescriptor descriptor = 1;
+  CommitToken visible_commit = 2;
+}
+
+service OnlineServingService {
+  rpc GetLatestFeatures(GetLatestFeaturesRequest) returns (GetLatestFeaturesResponse);
+  rpc GetSharedMemoryVector(GetSharedMemoryVectorRequest) returns (GetSharedMemoryVectorResponse);
+}

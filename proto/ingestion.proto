@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package bitemporal.feature.v1;
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+option cc_enable_arenas = true;
+
+message FeatureEventInput {
+  FeatureRef feature = 1;
+  google.protobuf.Timestamp event_time = 2;
+  google.protobuf.Timestamp system_time = 3;
+  FeatureValue value = 4;
+  OperationType operation = 5;
+  string write_id = 6;
+  string source_id = 7;
+  QualityFlags quality_flags = 8;
+}
+
+message EntityFeatureBatch {
+  EntityKey entity = 1;
+  repeated FeatureEventInput events = 2;
+}
+
+message WriteFeatureEventsRequest {
+  RequestContext context = 1;
+  repeated EntityFeatureBatch batches = 2;
+  DurabilityMode durability_mode = 3;
+  bool allow_trusted_system_time = 4;
+}
+
+message EntityCommitResult {
+  EntityKey entity = 1;
+  CommitToken commit = 2;
+  uint32 accepted_events = 3;
+  repeated ErrorDetail event_errors = 4;
+}
+
+message WriteFeatureEventsResponse {
+  repeated EntityCommitResult results = 1;
+}
+
+message StreamFeatureEventsRequest {
+  RequestContext context = 1;
+  EntityFeatureBatch batch = 2;
+  DurabilityMode durability_mode = 3;
+  bool allow_trusted_system_time = 4;
+}
+
+message StreamFeatureEventsResponse {
+  EntityCommitResult result = 1;
+}
+
+service IngestionService {
+  rpc WriteFeatureEvents(WriteFeatureEventsRequest) returns (WriteFeatureEventsResponse);
+  rpc StreamFeatureEvents(stream StreamFeatureEventsRequest) returns (stream StreamFeatureEventsResponse);
+}

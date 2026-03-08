@@ -1,0 +1,2308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bitemporal Feature Engine: End-to-End System Specification</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f2ea;
+      --paper: #fffdfa;
+      --ink: #1f1b16;
+      --muted: #655d53;
+      --border: #d9cfbf;
+      --accent: #8b4d1f;
+      --code-bg: #f1ece2;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      background: linear-gradient(180deg, #efe6d8 0%, var(--bg) 20%, #f8f4ed 100%);
+      color: var(--ink);
+      line-height: 1.6;
+    }
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 20px 80px;
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 24px;
+    }
+    .toc {
+      position: sticky;
+      top: 20px;
+      align-self: start;
+      background: rgba(255, 253, 250, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 18px 12px;
+      backdrop-filter: blur(8px);
+    }
+    .toc h2 {
+      margin: 0 0 12px;
+      font-size: 1.05rem;
+    }
+    .toc ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .toc li {
+      margin: 0 0 8px;
+    }
+    .toc .toc-level-1 a {
+      font-weight: 700;
+    }
+    .toc .toc-level-2 {
+      padding-left: 0;
+    }
+    .toc .toc-level-3 {
+      padding-left: 14px;
+    }
+    .toc a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+    .toc a:hover {
+      color: var(--accent);
+    }
+    main {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 36px 42px;
+      box-shadow: 0 20px 50px rgba(47, 36, 21, 0.08);
+    }
+    h1, h2, h3, h4, h5, h6 {
+      line-height: 1.2;
+      margin-top: 1.6em;
+      margin-bottom: 0.55em;
+      color: #2b2217;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 2.4rem;
+    }
+    h2 {
+      font-size: 1.55rem;
+      padding-top: 0.35rem;
+      border-top: 1px solid #ece3d5;
+    }
+    h3 {
+      font-size: 1.18rem;
+    }
+    p, ul, ol {
+      margin: 0 0 1rem;
+    }
+    ul, ol {
+      padding-left: 1.45rem;
+    }
+    li {
+      margin-bottom: 0.3rem;
+    }
+    code {
+      font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+      background: var(--code-bg);
+      border-radius: 4px;
+      padding: 0.1em 0.35em;
+      font-size: 0.92em;
+    }
+    pre {
+      background: #221d18;
+      color: #f7f1e8;
+      padding: 16px 18px;
+      border-radius: 12px;
+      overflow-x: auto;
+      margin: 1rem 0 1.25rem;
+      border: 1px solid #3c3228;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+    .mermaid {
+      white-space: pre;
+    }
+    a {
+      color: var(--accent);
+    }
+    @media (max-width: 900px) {
+      .page {
+        grid-template-columns: 1fr;
+      }
+      .toc {
+        position: static;
+      }
+      main {
+        padding: 24px 20px;
+      }
+      h1 {
+        font-size: 1.85rem;
+      }
+    }
+  </style>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'neutral' });
+  </script>
+</head>
+<body>
+  <div class="page">
+    <nav class="toc">
+<h2>Contents</h2>
+<ul>
+<li class="toc-level-1"><a href="#bitemporal-feature-engine-end-to-end-system-specification">Bitemporal Feature Engine: End-to-End System Specification</a></li>
+<li class="toc-level-2"><a href="#1-executive-summary">1. Executive Summary</a></li>
+<li class="toc-level-2"><a href="#2-product-positioning">2. Product Positioning</a></li>
+<li class="toc-level-3"><a href="#2-1-what-this-system-is">2.1 What This System Is</a></li>
+<li class="toc-level-3"><a href="#2-2-what-this-system-is-not">2.2 What This System Is Not</a></li>
+<li class="toc-level-3"><a href="#2-3-core-value-proposition">2.3 Core Value Proposition</a></li>
+<li class="toc-level-2"><a href="#3-primary-use-cases">3. Primary Use Cases</a></li>
+<li class="toc-level-3"><a href="#3-1-historical-training-dataset-construction">3.1 Historical Training Dataset Construction</a></li>
+<li class="toc-level-3"><a href="#3-2-online-inference-serving">3.2 Online Inference Serving</a></li>
+<li class="toc-level-3"><a href="#3-3-audit-and-time-travel">3.3 Audit and Time Travel</a></li>
+<li class="toc-level-3"><a href="#3-4-backfill-and-correction-handling">3.4 Backfill and Correction Handling</a></li>
+<li class="toc-level-3"><a href="#3-5-derived-features">3.5 Derived Features</a></li>
+<li class="toc-level-2"><a href="#4-design-principles">4. Design Principles</a></li>
+<li class="toc-level-2"><a href="#5-requirements">5. Requirements</a></li>
+<li class="toc-level-2"><a href="#5-1-functional-requirements">5.1 Functional Requirements</a></li>
+<li class="toc-level-2"><a href="#5-2-non-functional-requirements">5.2 Non-Functional Requirements</a></li>
+<li class="toc-level-2"><a href="#5-3-explicit-non-goals-for-v1">5.3 Explicit Non-Goals for v1</a></li>
+<li class="toc-level-2"><a href="#6-terminology">6. Terminology</a></li>
+<li class="toc-level-2"><a href="#7-high-level-system-architecture">7. High-Level System Architecture</a></li>
+<li class="toc-level-2"><a href="#7-1-control-plane-vs-data-plane">7.1 Control Plane vs Data Plane</a></li>
+<li class="toc-level-3"><a href="#control-plane-responsibilities">Control Plane Responsibilities</a></li>
+<li class="toc-level-3"><a href="#data-plane-responsibilities">Data Plane Responsibilities</a></li>
+<li class="toc-level-2"><a href="#8-logical-data-model">8. Logical Data Model</a></li>
+<li class="toc-level-2"><a href="#8-1-core-entities">8.1 Core Entities</a></li>
+<li class="toc-level-3"><a href="#feature-definition">Feature Definition</a></li>
+<li class="toc-level-3"><a href="#entity-key">Entity Key</a></li>
+<li class="toc-level-3"><a href="#feature-event-record">Feature Event Record</a></li>
+<li class="toc-level-2"><a href="#8-2-bitemporal-semantics">8.2 Bitemporal Semantics</a></li>
+<li class="toc-level-2"><a href="#8-3-version-selection-rule">8.3 Version Selection Rule</a></li>
+<li class="toc-level-2"><a href="#8-4-idempotency-and-deduplication">8.4 Idempotency and Deduplication</a></li>
+<li class="toc-level-2"><a href="#9-query-model">9. Query Model</a></li>
+<li class="toc-level-2"><a href="#9-1-query-types">9.1 Query Types</a></li>
+<li class="toc-level-3"><a href="#latest-lookup">Latest Lookup</a></li>
+<li class="toc-level-3"><a href="#as-of-lookup">As-Of Lookup</a></li>
+<li class="toc-level-3"><a href="#point-in-time-join">Point-in-Time Join</a></li>
+<li class="toc-level-3"><a href="#window-read">Window Read</a></li>
+<li class="toc-level-3"><a href="#audit-history">Audit History</a></li>
+<li class="toc-level-2"><a href="#9-2-optional-sql-surface">9.2 Optional SQL Surface</a></li>
+<li class="toc-level-2"><a href="#10-api-surface">10. API Surface</a></li>
+<li class="toc-level-2"><a href="#10-1-ingestion-api">10.1 Ingestion API</a></li>
+<li class="toc-level-2"><a href="#10-2-online-read-api">10.2 Online Read API</a></li>
+<li class="toc-level-2"><a href="#10-3-historical-api">10.3 Historical API</a></li>
+<li class="toc-level-2"><a href="#10-4-admin-api">10.4 Admin API</a></li>
+<li class="toc-level-2"><a href="#10-5-transaction-and-batch-semantics">10.5 Transaction and Batch Semantics</a></li>
+<li class="toc-level-3"><a href="#single-entity-batch-writes">Single-Entity Batch Writes</a></li>
+<li class="toc-level-3"><a href="#multi-entity-batch-writes">Multi-Entity Batch Writes</a></li>
+<li class="toc-level-3"><a href="#historical-jobs">Historical Jobs</a></li>
+<li class="toc-level-2"><a href="#10-6-admission-control-and-backpressure">10.6 Admission Control and Backpressure</a></li>
+<li class="toc-level-2"><a href="#11-storage-engine-architecture">11. Storage Engine Architecture</a></li>
+<li class="toc-level-2"><a href="#11-0-storage-node-internal-architecture">11.0 Storage Node Internal Architecture</a></li>
+<li class="toc-level-3"><a href="#local-partition-model">Local Partition Model</a></li>
+<li class="toc-level-3"><a href="#why-shared-wal-in-v1">Why Shared WAL in v1</a></li>
+<li class="toc-level-2"><a href="#11-0-1-threading-and-execution-model">11.0.1 Threading and Execution Model</a></li>
+<li class="toc-level-3"><a href="#write-execution-model">Write Execution Model</a></li>
+<li class="toc-level-3"><a href="#read-execution-model">Read Execution Model</a></li>
+<li class="toc-level-3"><a href="#background-work-isolation">Background Work Isolation</a></li>
+<li class="toc-level-2"><a href="#11-0-2-memory-management-strategy">11.0.2 Memory Management Strategy</a></li>
+<li class="toc-level-2"><a href="#11-1-why-log-structured">11.1 Why Log-Structured</a></li>
+<li class="toc-level-2"><a href="#11-2-wal-design">11.2 WAL Design</a></li>
+<li class="toc-level-3"><a href="#wal-requirements">WAL Requirements</a></li>
+<li class="toc-level-3"><a href="#wal-record-layout">WAL Record Layout</a></li>
+<li class="toc-level-3"><a href="#wal-segment-rules">WAL Segment Rules</a></li>
+<li class="toc-level-3"><a href="#durability-modes">Durability Modes</a></li>
+<li class="toc-level-2"><a href="#11-3-memtable-design">11.3 Memtable Design</a></li>
+<li class="toc-level-3"><a href="#memtable-rotation">Memtable Rotation</a></li>
+<li class="toc-level-2"><a href="#11-4-latest-cache-design">11.4 Latest Cache Design</a></li>
+<li class="toc-level-3"><a href="#cache-representation">Cache Representation</a></li>
+<li class="toc-level-3"><a href="#why-separate-latest-cache-from-historical-store">Why Separate Latest Cache from Historical Store</a></li>
+<li class="toc-level-3"><a href="#feature-group-packing">Feature Group Packing</a></li>
+<li class="toc-level-2"><a href="#11-5-on-disk-segment-design">11.5 On-Disk Segment Design</a></li>
+<li class="toc-level-3"><a href="#segment-key-order">Segment Key Order</a></li>
+<li class="toc-level-3"><a href="#segment-physical-layout">Segment Physical Layout</a></li>
+<li class="toc-level-3"><a href="#hybrid-row-column-strategy">Hybrid Row + Column Strategy</a></li>
+<li class="toc-level-2"><a href="#11-6-segment-metadata-and-pruning">11.6 Segment Metadata and Pruning</a></li>
+<li class="toc-level-2"><a href="#11-7-manifest">11.7 Manifest</a></li>
+<li class="toc-level-2"><a href="#11-8-on-disk-directory-layout">11.8 On-Disk Directory Layout</a></li>
+<li class="toc-level-2"><a href="#11-9-encoding-and-type-system">11.9 Encoding and Type System</a></li>
+<li class="toc-level-2"><a href="#12-indexing-strategy">12. Indexing Strategy</a></li>
+<li class="toc-level-2"><a href="#12-1-primary-temporal-index">12.1 Primary Temporal Index</a></li>
+<li class="toc-level-2"><a href="#12-2-entity-scoped-latest-index">12.2 Entity-Scoped Latest Index</a></li>
+<li class="toc-level-2"><a href="#12-3-segment-existence-filters">12.3 Segment Existence Filters</a></li>
+<li class="toc-level-2"><a href="#12-4-optional-time-partitioning">12.4 Optional Time Partitioning</a></li>
+<li class="toc-level-2"><a href="#13-query-engine-design">13. Query Engine Design</a></li>
+<li class="toc-level-2"><a href="#13-1-latest-lookup-execution">13.1 Latest Lookup Execution</a></li>
+<li class="toc-level-2"><a href="#13-2-as-of-lookup-execution">13.2 As-Of Lookup Execution</a></li>
+<li class="toc-level-2"><a href="#13-3-point-in-time-join-algorithm">13.3 Point-in-Time Join Algorithm</a></li>
+<li class="toc-level-3"><a href="#vectorized-pit-join">Vectorized PIT Join</a></li>
+<li class="toc-level-3"><a href="#join-semantics">Join Semantics</a></li>
+<li class="toc-level-2"><a href="#13-4-window-reads-and-rolling-aggregates">13.4 Window Reads and Rolling Aggregates</a></li>
+<li class="toc-level-2"><a href="#13-5-derived-features">13.5 Derived Features</a></li>
+<li class="toc-level-3"><a href="#materialized-derived-features">Materialized Derived Features</a></li>
+<li class="toc-level-3"><a href="#read-time-derived-features">Read-Time Derived Features</a></li>
+<li class="toc-level-3"><a href="#v1-rule">v1 Rule</a></li>
+<li class="toc-level-2"><a href="#13-6-minimal-query-optimization">13.6 Minimal Query Optimization</a></li>
+<li class="toc-level-2"><a href="#14-compaction-retention-and-garbage-collection">14. Compaction, Retention, and Garbage Collection</a></li>
+<li class="toc-level-2"><a href="#14-1-compaction-goals">14.1 Compaction Goals</a></li>
+<li class="toc-level-2"><a href="#14-2-bitemporal-retention-rules">14.2 Bitemporal Retention Rules</a></li>
+<li class="toc-level-2"><a href="#14-3-compaction-safety-rules">14.3 Compaction Safety Rules</a></li>
+<li class="toc-level-2"><a href="#14-4-tombstone-handling">14.4 Tombstone Handling</a></li>
+<li class="toc-level-2"><a href="#15-checkpointing-and-recovery">15. Checkpointing and Recovery</a></li>
+<li class="toc-level-2"><a href="#15-1-checkpoint-design">15.1 Checkpoint Design</a></li>
+<li class="toc-level-3"><a href="#approach-a-flush-based-checkpoint">Approach A: Flush-Based Checkpoint</a></li>
+<li class="toc-level-3"><a href="#approach-b-snapshot-based-checkpoint">Approach B: Snapshot-Based Checkpoint</a></li>
+<li class="toc-level-2"><a href="#15-2-recovery-sequence">15.2 Recovery Sequence</a></li>
+<li class="toc-level-2"><a href="#15-3-recovery-guarantees">15.3 Recovery Guarantees</a></li>
+<li class="toc-level-2"><a href="#15-4-fast-recovery-considerations">15.4 Fast Recovery Considerations</a></li>
+<li class="toc-level-2"><a href="#16-serving-layer-design">16. Serving Layer Design</a></li>
+<li class="toc-level-2"><a href="#16-1-transport-options">16.1 Transport Options</a></li>
+<li class="toc-level-2"><a href="#16-2-grpc-serving">16.2 gRPC Serving</a></li>
+<li class="toc-level-2"><a href="#16-3-shared-memory-serving">16.3 Shared Memory Serving</a></li>
+<li class="toc-level-3"><a href="#shared-memory-use-case">Shared Memory Use Case</a></li>
+<li class="toc-level-3"><a href="#shared-memory-model">Shared Memory Model</a></li>
+<li class="toc-level-3"><a href="#why-not-make-shared-memory-the-only-serving-path">Why Not Make Shared Memory the Only Serving Path</a></li>
+<li class="toc-level-2"><a href="#16-4-latency-budget">16.4 Latency Budget</a></li>
+<li class="toc-level-2"><a href="#16-5-serving-consistency-modes">16.5 Serving Consistency Modes</a></li>
+<li class="toc-level-2"><a href="#17-metadata-and-control-plane">17. Metadata and Control Plane</a></li>
+<li class="toc-level-2"><a href="#17-1-metadata-objects">17.1 Metadata Objects</a></li>
+<li class="toc-level-2"><a href="#17-2-feature-registry-requirements">17.2 Feature Registry Requirements</a></li>
+<li class="toc-level-2"><a href="#17-3-schema-evolution">17.3 Schema Evolution</a></li>
+<li class="toc-level-2"><a href="#17-4-metadata-persistence-design">17.4 Metadata Persistence Design</a></li>
+<li class="toc-level-2"><a href="#17-5-data-quality-and-freshness-contracts">17.5 Data Quality and Freshness Contracts</a></li>
+<li class="toc-level-2"><a href="#18-python-sdk-and-language-bindings">18. Python SDK and Language Bindings</a></li>
+<li class="toc-level-2"><a href="#18-1-sdk-responsibilities">18.1 SDK Responsibilities</a></li>
+<li class="toc-level-2"><a href="#18-2-sdk-non-responsibilities">18.2 SDK Non-Responsibilities</a></li>
+<li class="toc-level-2"><a href="#18-3-data-exchange-format">18.3 Data Exchange Format</a></li>
+<li class="toc-level-2"><a href="#18-4-connector-contract">18.4 Connector Contract</a></li>
+<li class="toc-level-2"><a href="#19-connectors-and-ecosystem-integrations">19. Connectors and Ecosystem Integrations</a></li>
+<li class="toc-level-2"><a href="#20-security-isolation-and-multi-tenancy">20. Security, Isolation, and Multi-Tenancy</a></li>
+<li class="toc-level-2"><a href="#20-1-security-requirements">20.1 Security Requirements</a></li>
+<li class="toc-level-2"><a href="#20-2-multi-tenancy-models">20.2 Multi-Tenancy Models</a></li>
+<li class="toc-level-3"><a href="#logical-multi-tenancy">Logical Multi-Tenancy</a></li>
+<li class="toc-level-3"><a href="#physical-multi-tenancy">Physical Multi-Tenancy</a></li>
+<li class="toc-level-2"><a href="#20-3-resource-isolation">20.3 Resource Isolation</a></li>
+<li class="toc-level-2"><a href="#21-observability-and-operations">21. Observability and Operations</a></li>
+<li class="toc-level-2"><a href="#21-1-metrics">21.1 Metrics</a></li>
+<li class="toc-level-2"><a href="#21-1-1-health-states">21.1.1 Health States</a></li>
+<li class="toc-level-2"><a href="#21-2-structured-logging">21.2 Structured Logging</a></li>
+<li class="toc-level-2"><a href="#21-3-tracing">21.3 Tracing</a></li>
+<li class="toc-level-2"><a href="#21-4-admin-tooling">21.4 Admin Tooling</a></li>
+<li class="toc-level-2"><a href="#22-backup-restore-and-disaster-recovery">22. Backup, Restore, and Disaster Recovery</a></li>
+<li class="toc-level-2"><a href="#22-1-backup-scope">22.1 Backup Scope</a></li>
+<li class="toc-level-2"><a href="#22-2-restore-workflow">22.2 Restore Workflow</a></li>
+<li class="toc-level-2"><a href="#22-3-disaster-recovery-targets">22.3 Disaster Recovery Targets</a></li>
+<li class="toc-level-2"><a href="#23-deployment-topologies">23. Deployment Topologies</a></li>
+<li class="toc-level-2"><a href="#23-1-embedded-mode">23.1 Embedded Mode</a></li>
+<li class="toc-level-2"><a href="#23-2-single-node-service-mode">23.2 Single-Node Service Mode</a></li>
+<li class="toc-level-2"><a href="#23-3-split-service-mode">23.3 Split Service Mode</a></li>
+<li class="toc-level-2"><a href="#23-4-recommended-v1-deployment-diagram">23.4 Recommended v1 Deployment Diagram</a></li>
+<li class="toc-level-2"><a href="#24-distributed-architecture-v2">24. Distributed Architecture (v2)</a></li>
+<li class="toc-level-2"><a href="#24-1-why-distributed-v2-not-v1">24.1 Why Distributed v2, Not v1</a></li>
+<li class="toc-level-2"><a href="#24-2-sharding-strategy">24.2 Sharding Strategy</a></li>
+<li class="toc-level-2"><a href="#24-3-replica-roles">24.3 Replica Roles</a></li>
+<li class="toc-level-2"><a href="#24-4-distributed-write-path">24.4 Distributed Write Path</a></li>
+<li class="toc-level-2"><a href="#24-5-distributed-query-routing">24.5 Distributed Query Routing</a></li>
+<li class="toc-level-3"><a href="#latest-reads">Latest Reads</a></li>
+<li class="toc-level-3"><a href="#historical-reads">Historical Reads</a></li>
+<li class="toc-level-2"><a href="#24-6-rebalancing">24.6 Rebalancing</a></li>
+<li class="toc-level-2"><a href="#25-consistency-model">25. Consistency Model</a></li>
+<li class="toc-level-2"><a href="#25-1-write-consistency">25.1 Write Consistency</a></li>
+<li class="toc-level-2"><a href="#25-2-read-consistency">25.2 Read Consistency</a></li>
+<li class="toc-level-2"><a href="#25-3-snapshot-semantics">25.3 Snapshot Semantics</a></li>
+<li class="toc-level-2"><a href="#25-4-batch-visibility-rules">25.4 Batch Visibility Rules</a></li>
+<li class="toc-level-2"><a href="#26-detailed-end-to-end-flows">26. Detailed End-to-End Flows</a></li>
+<li class="toc-level-2"><a href="#26-1-end-to-end-write-flow">26.1 End-to-End Write Flow</a></li>
+<li class="toc-level-2"><a href="#26-2-end-to-end-historical-join-flow">26.2 End-to-End Historical Join Flow</a></li>
+<li class="toc-level-2"><a href="#26-3-end-to-end-crash-recovery-flow">26.3 End-to-End Crash Recovery Flow</a></li>
+<li class="toc-level-2"><a href="#26-4-end-to-end-shared-memory-read-flow">26.4 End-to-End Shared Memory Read Flow</a></li>
+<li class="toc-level-2"><a href="#27-performance-engineering-strategy">27. Performance Engineering Strategy</a></li>
+<li class="toc-level-2"><a href="#27-1-benchmark-categories">27.1 Benchmark Categories</a></li>
+<li class="toc-level-2"><a href="#27-2-benchmark-workloads">27.2 Benchmark Workloads</a></li>
+<li class="toc-level-2"><a href="#27-3-performance-budget-ownership">27.3 Performance Budget Ownership</a></li>
+<li class="toc-level-2"><a href="#27-4-capacity-planning-knobs">27.4 Capacity Planning Knobs</a></li>
+<li class="toc-level-2"><a href="#28-failure-modes-and-risk-analysis">28. Failure Modes and Risk Analysis</a></li>
+<li class="toc-level-2"><a href="#28-1-data-correctness-risks">28.1 Data Correctness Risks</a></li>
+<li class="toc-level-2"><a href="#28-1-1-correctness-validation-strategy">28.1.1 Correctness Validation Strategy</a></li>
+<li class="toc-level-2"><a href="#28-2-operational-risks">28.2 Operational Risks</a></li>
+<li class="toc-level-2"><a href="#28-3-product-risks">28.3 Product Risks</a></li>
+<li class="toc-level-2"><a href="#29-design-tradeoffs">29. Design Tradeoffs</a></li>
+<li class="toc-level-2"><a href="#29-1-lsm-vs-b-tree">29.1 LSM vs B-Tree</a></li>
+<li class="toc-level-2"><a href="#29-2-hybrid-segment-layout-vs-pure-columnar">29.2 Hybrid Segment Layout vs Pure Columnar</a></li>
+<li class="toc-level-2"><a href="#29-3-dedicated-latest-cache-vs-on-demand-resolution">29.3 Dedicated Latest Cache vs On-Demand Resolution</a></li>
+<li class="toc-level-2"><a href="#29-4-narrow-query-model-vs-full-sql">29.4 Narrow Query Model vs Full SQL</a></li>
+<li class="toc-level-2"><a href="#30-recommended-v1-scope">30. Recommended v1 Scope</a></li>
+<li class="toc-level-2"><a href="#31-recommended-repository-and-file-structure">31. Recommended Repository and File Structure</a></li>
+<li class="toc-level-3"><a href="#31-1-directory-responsibilities">31.1 Directory Responsibilities</a></li>
+<li class="toc-level-3"><a href="#31-2-binary-targets">31.2 Binary Targets</a></li>
+<li class="toc-level-3"><a href="#31-3-runtime-filesystem-layout">31.3 Runtime Filesystem Layout</a></li>
+<li class="toc-level-2"><a href="#31-4-test-architecture">31.4 Test Architecture</a></li>
+<li class="toc-level-2"><a href="#32-adrs-that-should-exist-early">32. ADRs That Should Exist Early</a></li>
+<li class="toc-level-2"><a href="#33-open-questions">33. Open Questions</a></li>
+<li class="toc-level-2"><a href="#34-bottom-line">34. Bottom Line</a></li>
+</ul>
+</nav>
+    <main>
+      <h1 id="bitemporal-feature-engine-end-to-end-system-specification">Bitemporal Feature Engine: End-to-End System Specification</h1>
+<p>Status: Draft v1</p>
+<p>This document specifies an end-to-end architecture for a specialized feature database for machine learning workloads that need:</p>
+<ul>
+<li>point-in-time correctness for offline training</li>
+<li>low-latency latest-value serving for online inference</li>
+<li>bitemporal history: both event time and system time</li>
+<li>real database behavior: WAL durability, crash recovery, checkpoints, compaction, backup, and operational observability</li>
+</ul>
+<p>The design is intentionally more rigorous than a cache or a thin feature-store wrapper. The product is a storage and query engine with a serving layer and thin language bindings.</p>
+<h2 id="1-executive-summary">1. Executive Summary</h2>
+<p>The system is a bitemporal feature engine: a database built to store, retrieve, and serve ML features under two timelines:</p>
+<ul>
+<li><code>event_time</code>: when a fact was true in the real world</li>
+<li><code>system_time</code>: when the platform learned or recorded that fact</li>
+</ul>
+<p>This distinction matters because many real datasets are corrected, delayed, backfilled, or revised after the fact. A normal "latest value" store cannot answer:</p>
+<ul>
+<li>"What was the feature value for this entity as of market close on March 15, 2024?"</li>
+<li>"What did the system know at that moment, before the late correction arrived?"</li>
+</ul>
+<p>This engine can answer both.</p>
+<p>It is designed for:</p>
+<ul>
+<li>quant and trading systems</li>
+<li>fraud and risk models</li>
+<li>recommender systems with late events</li>
+<li>industrial and IoT monitoring</li>
+<li>healthcare and claims data</li>
+<li>any ML team that needs leakage-safe historical feature retrieval plus fast online inference</li>
+</ul>
+<p>The system is not meant to replace a warehouse, OLAP engine, or general relational database. It is a specialized feature database with narrow, strong semantics:</p>
+<ul>
+<li>latest lookup by entity</li>
+<li>time-travel reads</li>
+<li>point-in-time joins</li>
+<li>rolling window reads</li>
+<li>bounded derived feature computation</li>
+<li>durable ingestion and replay</li>
+</ul>
+<p>The design has two architectural layers:</p>
+<ul>
+<li><code>v1</code>: single-node durable engine with thin clients and APIs</li>
+<li><code>v2</code>: distributed cluster with sharding, replication, and scale-out query execution</li>
+</ul>
+<p>The single-node design is the foundation. The distributed design extends it without changing the logical model.</p>
+<h2 id="2-product-positioning">2. Product Positioning</h2>
+<h3 id="2-1-what-this-system-is">2.1 What This System Is</h3>
+<p>This system is:</p>
+<ul>
+<li>a temporal storage engine for ML features</li>
+<li>a low-latency online feature server</li>
+<li>an offline historical retrieval engine for training set construction</li>
+<li>a metadata-aware registry for entities, features, and transformations</li>
+</ul>
+<h3 id="2-2-what-this-system-is-not">2.2 What This System Is Not</h3>
+<p>This system is not:</p>
+<ul>
+<li>a generic SQL data warehouse</li>
+<li>a full stream processor</li>
+<li>a feature engineering notebook platform</li>
+<li>a model registry</li>
+<li>a training orchestration system</li>
+</ul>
+<p>The system may integrate with those tools, but it should not absorb their responsibilities.</p>
+<h3 id="2-3-core-value-proposition">2.3 Core Value Proposition</h3>
+<p>The product wins if it does five things better than general-purpose alternatives:</p>
+<ol>
+<li>Makes temporal correctness the default.</li>
+<li>Makes online reads extremely fast.</li>
+<li>Treats late data and corrections as first-class, not edge cases.</li>
+<li>Provides operationally boring durability and recovery behavior.</li>
+<li>Exposes a clean Python-facing workflow while keeping the hot path in C++.</li>
+</ol>
+<h2 id="3-primary-use-cases">3. Primary Use Cases</h2>
+<h3 id="3-1-historical-training-dataset-construction">3.1 Historical Training Dataset Construction</h3>
+<p>Given a table of labeled examples like:</p>
+<pre><code class="language-text">(entity_id, label_time, label)</code></pre>
+<p>the engine must produce feature values that satisfy both:</p>
+<ul>
+<li><code>feature.event_time &lt;= label_time</code></li>
+<li><code>feature.system_time &lt;= training_cutoff</code></li>
+</ul>
+<p>This prevents lookahead leakage and correctly excludes late-arriving corrections that were not known yet.</p>
+<h3 id="3-2-online-inference-serving">3.2 Online Inference Serving</h3>
+<p>Given an entity identifier or request context, the engine must return the latest online feature vector in sub-millisecond to low-single-digit millisecond latency, depending on deployment topology and storage residency.</p>
+<h3 id="3-3-audit-and-time-travel">3.3 Audit and Time Travel</h3>
+<p>Users must be able to ask:</p>
+<ul>
+<li>what did we know then?</li>
+<li>when did we learn it?</li>
+<li>what value did a later correction replace?</li>
+<li>why did a model decision differ between two dates?</li>
+</ul>
+<h3 id="3-4-backfill-and-correction-handling">3.4 Backfill and Correction Handling</h3>
+<p>The system must safely ingest:</p>
+<ul>
+<li>out-of-order events</li>
+<li>corrected historical facts</li>
+<li>deletion or tombstone events</li>
+<li>replayed streams after upstream failure</li>
+</ul>
+<h3 id="3-5-derived-features">3.5 Derived Features</h3>
+<p>The system should support bounded derived features such as:</p>
+<ul>
+<li>rolling averages</li>
+<li>counts</li>
+<li>z-scores</li>
+<li>ratios</li>
+<li>latest-of dependencies</li>
+</ul>
+<p>without trying to become a general UDF platform in v1.</p>
+<h2 id="4-design-principles">4. Design Principles</h2>
+<ol>
+<li>Temporal semantics first.</li>
+<li>Durability before cleverness.</li>
+<li>The hot path must stay in C++.</li>
+<li>Python is a client surface, not the data plane.</li>
+<li>Use immutable on-disk structures and append-first writes.</li>
+<li>Prefer explicit narrow APIs over a fake "full SQL" story.</li>
+<li>Single-node correctness and operability come before clustering.</li>
+<li>Use columnar formats where they help scans, and indexed key lookups where they help serving.</li>
+<li>Make correctness failures impossible by default and performance degradations observable.</li>
+</ol>
+<h2 id="5-requirements">5. Requirements</h2>
+<h2 id="5-1-functional-requirements">5.1 Functional Requirements</h2>
+<p>The engine must support:</p>
+<ul>
+<li>feature registration and schema management</li>
+<li>ingest of feature updates with event time and system time</li>
+<li>idempotent writes under retry and replay</li>
+<li>latest value retrieval by entity</li>
+<li>historical as-of retrieval</li>
+<li>point-in-time joins against a driving dataset</li>
+<li>bounded window reads</li>
+<li>deletion/tombstone semantics</li>
+<li>WAL-backed durability</li>
+<li>restart recovery</li>
+<li>background compaction</li>
+<li>data retention policies</li>
+<li>Arrow-native export paths</li>
+<li>Python SDK and gRPC APIs</li>
+</ul>
+<h2 id="5-2-non-functional-requirements">5.2 Non-Functional Requirements</h2>
+<p>Initial targets for a credible v1:</p>
+<ul>
+<li>acknowledged writes survive crash under synchronous durability mode</li>
+<li>p99 online read under 1 ms for in-memory latest cache on colocated deployment</li>
+<li>p99 online read under 5 ms for remote gRPC within a single availability zone</li>
+<li>historical retrieval throughput sufficient to build training data faster than warehouse-based point-in-time join workflows</li>
+<li>checkpoint and recovery time bounded by WAL replay plus cache rebuild budgets</li>
+<li>predictable tail latency under background compaction</li>
+</ul>
+<h2 id="5-3-explicit-non-goals-for-v1">5.3 Explicit Non-Goals for v1</h2>
+<ul>
+<li>arbitrary ANSI SQL support</li>
+<li>cross-tenant distributed joins</li>
+<li>full OLAP aggregation planner</li>
+<li>active-active multi-region replication</li>
+<li>general stream processing graph engine</li>
+<li>arbitrary user-defined Python execution inside the core engine</li>
+</ul>
+<h2 id="6-terminology">6. Terminology</h2>
+<ul>
+<li><code>entity</code>: the real-world object keyed in the feature store, such as a user, instrument, device, or merchant</li>
+<li><code>feature</code>: a named value associated with an entity</li>
+<li><code>event_time</code>: when the value was true in the domain</li>
+<li><code>system_time</code>: when the system observed, accepted, or materialized that value</li>
+<li><code>valid time</code>: synonym here for event time</li>
+<li><code>ingest time</code>: the write-time assigned by the engine; typically the initial system time</li>
+<li><code>revision</code>: a later value for the same event time recorded at a newer system time</li>
+<li><code>as-of query</code>: a query constrained by both event-time and system-time cutoffs</li>
+<li><code>latest view</code>: current online-serving snapshot per entity</li>
+<li><code>point-in-time join</code>: joining a label dataset to feature histories without future leakage</li>
+<li><code>tombstone</code>: a deletion marker</li>
+</ul>
+<h2 id="7-high-level-system-architecture">7. High-Level System Architecture</h2>
+<p>The end-to-end system is split into:</p>
+<ul>
+<li>metadata/control plane</li>
+<li>ingestion plane</li>
+<li>storage/query plane</li>
+<li>online serving plane</li>
+<li>SDK/connectors</li>
+<li>operations and observability plane</li>
+</ul>
+<pre class="mermaid">flowchart LR
+    A[&quot;Data Producers\n(streams, apps, batch loaders)&quot;] --&gt; B[&quot;Ingestion API\n(gRPC, Kafka connector, bulk loader)&quot;]
+    B --&gt; C[&quot;Write Coordinator&quot;]
+    C --&gt; D[&quot;WAL&quot;]
+    C --&gt; E[&quot;Memtable&quot;]
+    E --&gt; F[&quot;Latest Cache&quot;]
+    E --&gt; G[&quot;Immutable Segments&quot;]
+    D --&gt; H[&quot;Recovery Manager&quot;]
+    G --&gt; I[&quot;Historical Query Engine&quot;]
+    F --&gt; J[&quot;Online Serving API&quot;]
+    I --&gt; K[&quot;Dataset Builder / Arrow Export&quot;]
+    L[&quot;Metadata Catalog&quot;] --&gt; B
+    L --&gt; I
+    L --&gt; J
+    M[&quot;Python SDK&quot;] --&gt; J
+    M --&gt; K
+    N[&quot;Ops / Metrics / Admin&quot;] --&gt; D
+    N --&gt; G
+    N --&gt; J
+    H --&gt; E
+    H --&gt; F</pre>
+<h2 id="7-1-control-plane-vs-data-plane">7.1 Control Plane vs Data Plane</h2>
+<p>The separation matters.</p>
+<h3 id="control-plane-responsibilities">Control Plane Responsibilities</h3>
+<ul>
+<li>feature registry</li>
+<li>schema validation rules</li>
+<li>entity type definitions</li>
+<li>transformation definitions</li>
+<li>retention policies</li>
+<li>access control metadata</li>
+<li>deployment and tenant configuration</li>
+</ul>
+<h3 id="data-plane-responsibilities">Data Plane Responsibilities</h3>
+<ul>
+<li>write path</li>
+<li>durability</li>
+<li>cache maintenance</li>
+<li>historical scans</li>
+<li>as-of query execution</li>
+<li>low-latency serving</li>
+</ul>
+<p>The control plane may be embedded in v1, but conceptually it is separate. This avoids designing the core engine around UI or workflow concerns.</p>
+<h2 id="8-logical-data-model">8. Logical Data Model</h2>
+<p>The logical model is append-only and versioned.</p>
+<h2 id="8-1-core-entities">8.1 Core Entities</h2>
+<h3 id="feature-definition">Feature Definition</h3>
+<pre><code class="language-text">feature_definition(
+  tenant_id,
+  feature_id,
+  feature_name,
+  entity_type,
+  value_type,
+  serving_enabled,
+  historical_enabled,
+  retention_policy,
+  nullability,
+  transform_spec,
+  tags,
+  created_at,
+  updated_at
+)</code></pre>
+<h3 id="entity-key">Entity Key</h3>
+<p>Entities are scoped by tenant and type:</p>
+<pre><code class="language-text">entity_key = (tenant_id, entity_type, entity_id)</code></pre>
+<h3 id="feature-event-record">Feature Event Record</h3>
+<p>This is the core immutable record:</p>
+<pre><code class="language-text">feature_event(
+  tenant_id,
+  entity_type,
+  entity_id,
+  feature_id,
+  event_time,
+  system_time,
+  sequence_no,
+  op,
+  value,
+  quality_flags,
+  source_id,
+  write_id,
+  checksum
+)</code></pre>
+<p>Where:</p>
+<ul>
+<li><code>sequence_no</code> breaks ties within the same event/system timestamp pair</li>
+<li><code>op</code> is <code>UPSERT</code> or <code>DELETE</code></li>
+<li><code>write_id</code> is an idempotency key</li>
+<li><code>quality_flags</code> encode freshness, missingness, correction, inferred, or upstream validation issues</li>
+</ul>
+<h2 id="8-2-bitemporal-semantics">8.2 Bitemporal Semantics</h2>
+<p>The engine stores facts along two axes.</p>
+<p>Example:</p>
+<pre><code class="language-text">entity = AAPL
+feature = rolling_vol_30d
+
+Version 1:
+  event_time  = 2026-03-01 10:00:00
+  system_time = 2026-03-01 10:00:02
+  value       = 0.221
+
+Version 2 (correction):
+  event_time  = 2026-03-01 10:00:00
+  system_time = 2026-03-01 10:04:15
+  value       = 0.219</code></pre>
+<p>The engine must preserve both.</p>
+<p>Query answers depend on both cutoffs:</p>
+<ul>
+<li>as of <code>event_time=10:03</code> and <code>system_time=10:03</code>, answer is <code>0.221</code></li>
+<li>as of <code>event_time=10:05</code> and <code>system_time=10:05</code>, answer is <code>0.219</code></li>
+</ul>
+<h2 id="8-3-version-selection-rule">8.3 Version Selection Rule</h2>
+<p>For an as-of lookup:</p>
+<ol>
+<li>Select records matching tenant, entity, and feature.</li>
+<li>Filter to <code>event_time &lt;= query_event_cutoff</code>.</li>
+<li>Filter to <code>system_time &lt;= query_system_cutoff</code>.</li>
+<li>Choose the record with maximal <code>(event_time, system_time, sequence_no)</code>.</li>
+<li>If the chosen record is a tombstone, the result is missing.</li>
+</ol>
+<p>This is the core rule the whole engine exists to implement.</p>
+<h2 id="8-4-idempotency-and-deduplication">8.4 Idempotency and Deduplication</h2>
+<p>Producers may retry writes. The system must support idempotency through:</p>
+<ul>
+<li>producer-assigned <code>write_id</code></li>
+<li>source stream offsets where applicable</li>
+<li>WAL-level dedupe for recent write windows</li>
+<li>compaction-time duplicate suppression</li>
+</ul>
+<p>The contract should be "at least once ingestion, exactly once visible state when write identifiers are used correctly."</p>
+<h2 id="9-query-model">9. Query Model</h2>
+<p>The product should expose a focused query model, not a broad SQL claim.</p>
+<h2 id="9-1-query-types">9.1 Query Types</h2>
+<h3 id="latest-lookup">Latest Lookup</h3>
+<p>Retrieve current online-serving values for an entity or batch of entities:</p>
+<pre><code class="language-text">get_latest(
+  tenant_id,
+  entity_type,
+  entity_ids[],
+  feature_ids[],
+  freshness_requirement?,
+  consistency_mode?
+)</code></pre>
+<h3 id="as-of-lookup">As-Of Lookup</h3>
+<p>Retrieve feature values under explicit temporal cutoffs:</p>
+<pre><code class="language-text">get_as_of(
+  tenant_id,
+  entity_type,
+  entity_ids[],
+  feature_ids[],
+  event_cutoff,
+  system_cutoff
+)</code></pre>
+<h3 id="point-in-time-join">Point-in-Time Join</h3>
+<p>Given a driving table:</p>
+<pre><code class="language-text">join_features(
+  driving_table[
+    row_id,
+    entity_id,
+    label_time,
+    optionally_system_cutoff
+  ],
+  feature_ids[],
+  default_system_cutoff = label_time or training_snapshot_time,
+  join_mode = EXACT_ENTITY
+)</code></pre>
+<h3 id="window-read">Window Read</h3>
+<p>Retrieve time-bounded histories:</p>
+<pre><code class="language-text">scan_window(
+  tenant_id,
+  entity_type,
+  entity_id,
+  feature_id,
+  event_start,
+  event_end,
+  system_cutoff
+)</code></pre>
+<h3 id="audit-history">Audit History</h3>
+<p>Retrieve all revisions for a given event interval:</p>
+<pre><code class="language-text">audit_history(
+  tenant_id,
+  entity_type,
+  entity_id,
+  feature_id,
+  event_start,
+  event_end
+)</code></pre>
+<h2 id="9-2-optional-sql-surface">9.2 Optional SQL Surface</h2>
+<p>The engine should provide a narrow SQL adapter for convenience, but SQL is not the primary contract.</p>
+<p>A reasonable SQL surface:</p>
+<pre><code class="language-sql">SELECT *
+FROM feature_as_of(
+  tenant =&gt; &#x27;prod&#x27;,
+  entity_type =&gt; &#x27;instrument&#x27;,
+  entity_id =&gt; &#x27;AAPL&#x27;,
+  feature_names =&gt; [&#x27;rolling_vol_30d&#x27;, &#x27;order_imbalance&#x27;],
+  event_cutoff =&gt; TIMESTAMP &#x27;2026-03-01 10:03:00&#x27;,
+  system_cutoff =&gt; TIMESTAMP &#x27;2026-03-01 10:03:00&#x27;
+);</code></pre>
+<p>The SQL layer should compile into engine-native operators, not introduce a general-purpose planner in v1.</p>
+<h2 id="10-api-surface">10. API Surface</h2>
+<h2 id="10-1-ingestion-api">10.1 Ingestion API</h2>
+<p>Support three write entry points:</p>
+<ol>
+<li>gRPC unary and streaming writes</li>
+<li>Kafka connector for stream-driven ingestion</li>
+<li>bulk file import for backfills</li>
+</ol>
+<p>The core internal write request:</p>
+<pre><code class="language-text">WriteFeatureEventsRequest {
+  tenant_id
+  entity_type
+  events[] {
+    entity_id
+    feature_id
+    event_time
+    optional system_time
+    value
+    op
+    write_id
+    quality_flags
+    source_id
+  }
+  durability_mode
+}</code></pre>
+<p>If <code>system_time</code> is omitted, the server stamps it on acceptance.</p>
+<h2 id="10-2-online-read-api">10.2 Online Read API</h2>
+<pre><code class="language-text">GetLatestFeaturesRequest {
+  tenant_id
+  entity_type
+  entity_ids[]
+  feature_ids[]
+  freshness_requirement_ms
+  consistency_mode
+}</code></pre>
+<p>Response format should support:</p>
+<ul>
+<li>protobuf for RPC transport</li>
+<li>Arrow record batch for batch retrieval</li>
+<li>shared-memory reference for colocated clients</li>
+</ul>
+<h2 id="10-3-historical-api">10.3 Historical API</h2>
+<pre><code class="language-text">BuildTrainingDatasetRequest {
+  tenant_id
+  entity_type
+  driving_table_ref
+  feature_ids[]
+  event_time_column
+  optional system_time_column
+  output_format
+  output_location
+}</code></pre>
+<p>This API is asynchronous for large jobs.</p>
+<h2 id="10-4-admin-api">10.4 Admin API</h2>
+<p>The admin plane should manage:</p>
+<ul>
+<li>feature registration</li>
+<li>compaction controls</li>
+<li>retention policy changes</li>
+<li>checkpoint control</li>
+<li>backup and restore commands</li>
+<li>metrics and health endpoints</li>
+</ul>
+<h2 id="10-5-transaction-and-batch-semantics">10.5 Transaction and Batch Semantics</h2>
+<p>The system should be explicit about what is and is not atomic.</p>
+<h3 id="single-entity-batch-writes">Single-Entity Batch Writes</h3>
+<p>All events for the same <code>(tenant_id, entity_type, entity_id)</code> in one request should be treated as one atomic unit:</p>
+<ul>
+<li>one WAL append batch</li>
+<li>one visibility point</li>
+<li>one latest-cache publication boundary</li>
+</ul>
+<p>This is sufficient for most feature ingestion, because all features for one entity naturally map together.</p>
+<h3 id="multi-entity-batch-writes">Multi-Entity Batch Writes</h3>
+<p>For v1, multi-entity requests are a transport optimization, not a transaction:</p>
+<ul>
+<li>each entity batch may commit independently</li>
+<li>response returns per-entity or per-record status</li>
+<li>no cross-entity atomicity guarantee</li>
+</ul>
+<p>This keeps the engine simple and lines up with the partitioning model.</p>
+<h3 id="historical-jobs">Historical Jobs</h3>
+<p>Historical dataset builds are snapshot-consistent with respect to:</p>
+<ul>
+<li>manifest version</li>
+<li>WAL replay boundary or checkpoint watermark</li>
+<li>explicit system-time cutoff</li>
+</ul>
+<p>They are not blocked by concurrent writes; they run against a pinned snapshot.</p>
+<h2 id="10-6-admission-control-and-backpressure">10.6 Admission Control and Backpressure</h2>
+<p>The API layer must enforce backpressure before the engine becomes unstable.</p>
+<p>Required controls:</p>
+<ul>
+<li>max in-flight write bytes</li>
+<li>max in-flight historical job memory</li>
+<li>per-tenant QPS and bandwidth quotas</li>
+<li>bounded WAL queue depth</li>
+<li>bounded compaction backlog alerts</li>
+</ul>
+<p>When a limit is hit, the system should:</p>
+<ul>
+<li>reject non-critical writes with retryable overload errors</li>
+<li>shed or queue low-priority historical jobs</li>
+<li>preserve online serving headroom</li>
+</ul>
+<p>Online serving is the highest-priority path. Background work must degrade first.</p>
+<h2 id="11-storage-engine-architecture">11. Storage Engine Architecture</h2>
+<p>The core engine is log-structured with a hybrid in-memory and immutable-segment design.</p>
+<p>The write path is:</p>
+<ol>
+<li>validate request against metadata</li>
+<li>assign <code>system_time</code>, <code>sequence_no</code>, and internal LSN</li>
+<li>append to WAL</li>
+<li>fsync according to durability policy</li>
+<li>apply to memtable</li>
+<li>update latest cache</li>
+<li>ACK</li>
+<li>flush memtable to immutable segment asynchronously</li>
+</ol>
+<pre class="mermaid">flowchart LR
+    A[&quot;Write Request&quot;] --&gt; B[&quot;Schema + Auth Validation&quot;]
+    B --&gt; C[&quot;Assign system_time / seq / LSN&quot;]
+    C --&gt; D[&quot;Append WAL&quot;]
+    D --&gt; E[&quot;Durability Gate&quot;]
+    E --&gt; F[&quot;Memtable Apply&quot;]
+    F --&gt; G[&quot;Latest Cache Update&quot;]
+    G --&gt; H[&quot;ACK&quot;]
+    F --&gt; I[&quot;Flush Scheduler&quot;]
+    I --&gt; J[&quot;Immutable Segment Writer&quot;]
+    J --&gt; K[&quot;Manifest Update&quot;]
+    K --&gt; L[&quot;Compaction Queue&quot;]</pre>
+<h2 id="11-0-storage-node-internal-architecture">11.0 Storage Node Internal Architecture</h2>
+<p>One node should not be designed as a single giant lock-protected data structure. It should be internally partitioned.</p>
+<h3 id="local-partition-model">Local Partition Model</h3>
+<p>Within a node, data is divided into <code>P</code> local partitions by:</p>
+<pre><code class="language-text">partition_id = hash(tenant_id, entity_type, entity_id) % P</code></pre>
+<p>Each partition owns:</p>
+<ul>
+<li>a memtable</li>
+<li>a latest cache shard</li>
+<li>immutable segment set</li>
+<li>flush queue</li>
+<li>compaction queue</li>
+<li>local query executors for partition-scoped work</li>
+</ul>
+<p>Node-wide components remain shared:</p>
+<ul>
+<li>metadata catalog</li>
+<li>WAL</li>
+<li>manifest</li>
+<li>RPC ingress</li>
+<li>admin endpoints</li>
+</ul>
+<p>This gives a clean balance:</p>
+<ul>
+<li>node-wide durability and recovery stay simple</li>
+<li>hot data paths scale across cores</li>
+<li>the future distributed shard model looks similar to the local partition model</li>
+</ul>
+<pre class="mermaid">flowchart TB
+    A[&quot;RPC / Connector Ingress&quot;] --&gt; B[&quot;Write Coordinator&quot;]
+    B --&gt; C[&quot;Shared WAL&quot;]
+    C --&gt; D[&quot;Partition Router&quot;]
+    D --&gt; E[&quot;Partition 0\nmemtable + cache + segments&quot;]
+    D --&gt; F[&quot;Partition 1\nmemtable + cache + segments&quot;]
+    D --&gt; G[&quot;Partition N\nmemtable + cache + segments&quot;]
+    H[&quot;Historical Query Coordinator&quot;] --&gt; E
+    H --&gt; F
+    H --&gt; G
+    I[&quot;Manifest + Metadata&quot;] --&gt; E
+    I --&gt; F
+    I --&gt; G</pre>
+<h3 id="why-shared-wal-in-v1">Why Shared WAL in v1</h3>
+<p>v1 should use one node-wide WAL rather than per-partition WALs.</p>
+<p>Benefits:</p>
+<ul>
+<li>simpler crash recovery</li>
+<li>one durability pipeline</li>
+<li>one global commit ordering</li>
+<li>easier checkpointing</li>
+</ul>
+<p>Tradeoff:</p>
+<ul>
+<li>WAL append can become a throughput bottleneck</li>
+</ul>
+<p>That is acceptable in v1 because:</p>
+<ul>
+<li>batch append amortizes cost</li>
+<li>the first hard problem is correctness, not maximum write scaling</li>
+<li>a distributed design can move to shard-local WALs later if needed</li>
+</ul>
+<h2 id="11-0-1-threading-and-execution-model">11.0.1 Threading and Execution Model</h2>
+<p>The node should use role-specific executors rather than a single generic thread pool.</p>
+<p>Recommended threads or executors:</p>
+<ul>
+<li>network ingress threads for gRPC and connector IO</li>
+<li>one WAL writer thread or tightly controlled WAL append group</li>
+<li>one apply queue per partition</li>
+<li>flush workers for memtable-to-segment conversion</li>
+<li>compaction workers with IO and CPU budgets</li>
+<li>query executor pool for historical scans and joins</li>
+<li>admin and metrics threads</li>
+</ul>
+<h3 id="write-execution-model">Write Execution Model</h3>
+<ol>
+<li>ingress thread parses and validates request</li>
+<li>write coordinator assigns metadata and sends batch to WAL appender</li>
+<li>WAL appender serializes commit order</li>
+<li>after durability gate, record is routed to owning partition apply queue</li>
+<li>partition worker mutates memtable and publishes latest-cache snapshot</li>
+<li>ACK completes after partition apply visibility</li>
+</ol>
+<p>This avoids heavy fine-grained locking in the write path.</p>
+<h3 id="read-execution-model">Read Execution Model</h3>
+<ul>
+<li>latest reads go directly to partition cache shard</li>
+<li>historical queries are planned centrally but executed in partition-local tasks</li>
+<li>batch results merge at the coordinator</li>
+</ul>
+<h3 id="background-work-isolation">Background Work Isolation</h3>
+<p>Compaction and flush workers must run under explicit CPU and IO quotas so they cannot consume all resources during load spikes.</p>
+<h2 id="11-0-2-memory-management-strategy">11.0.2 Memory Management Strategy</h2>
+<p>The engine needs deliberate memory budgeting.</p>
+<p>Recommended memory classes:</p>
+<ul>
+<li>WAL buffers</li>
+<li>mutable memtables</li>
+<li>immutable memtables waiting to flush</li>
+<li>latest cache snapshots</li>
+<li>query execution buffers</li>
+<li>shared-memory serving arena</li>
+<li>compaction scratch space</li>
+</ul>
+<p>Hard limits should exist for each class.</p>
+<p>If memory pressure rises:</p>
+<ol>
+<li>stop admitting large historical jobs</li>
+<li>force memtable rotation</li>
+<li>increase flush priority</li>
+<li>shed optional caches before harming correctness</li>
+</ol>
+<p>The latest cache should be size-aware and optionally tiered by feature group criticality.</p>
+<h2 id="11-1-why-log-structured">11.1 Why Log-Structured</h2>
+<p>A log-structured design fits the workload:</p>
+<ul>
+<li>writes are append-heavy</li>
+<li>corrections arrive over time</li>
+<li>old versions must be preserved</li>
+<li>scans benefit from immutable sorted structures</li>
+<li>recovery is straightforward with WAL + manifest</li>
+</ul>
+<h2 id="11-2-wal-design">11.2 WAL Design</h2>
+<p>The WAL is the durability backbone.</p>
+<h3 id="wal-requirements">WAL Requirements</h3>
+<ul>
+<li>append-only</li>
+<li>checksummed</li>
+<li>segment-rotated</li>
+<li>replayable in order</li>
+<li>idempotent under partial recovery</li>
+<li>independent of compaction</li>
+</ul>
+<h3 id="wal-record-layout">WAL Record Layout</h3>
+<pre><code class="language-text">WALRecordHeader {
+  magic
+  version
+  record_type
+  length
+  lsn
+  crc32c
+}
+
+WALFeatureEventPayload {
+  tenant_id
+  entity_type
+  entity_id
+  feature_id
+  event_time
+  system_time
+  sequence_no
+  op
+  value_encoding
+  value_bytes
+  write_id
+  source_id
+  quality_flags
+}</code></pre>
+<h3 id="wal-segment-rules">WAL Segment Rules</h3>
+<ul>
+<li>fixed-size or target-size segment files</li>
+<li>rolling on size or time thresholds</li>
+<li>footer summarizing min/max LSN and checksum</li>
+<li>manifest entry after segment close</li>
+<li>preallocation optional to reduce fragmentation</li>
+<li>fsync policy must include both data file and directory entry semantics where the platform requires it</li>
+</ul>
+<h3 id="durability-modes">Durability Modes</h3>
+<ul>
+<li><code>SYNC</code>: fsync before ACK</li>
+<li><code>GROUP_COMMIT</code>: batch fsync every N ms or M records</li>
+<li><code>ASYNC</code>: append and return before fsync; only for lower-tier environments</li>
+</ul>
+<p>Default production mode should be <code>GROUP_COMMIT</code> with a small bounded window.</p>
+<h2 id="11-3-memtable-design">11.3 Memtable Design</h2>
+<p>The memtable holds recent unflushed state.</p>
+<p>Recommended structure:</p>
+<p><code>(tenant, entity_type, entity_id, feature_id, event_time desc, system_time desc, sequence_no desc)</code></p>
+<ul>
+<li>concurrent skiplist or ART/B-tree variant keyed by</li>
+<li>append-optimized allocator / arena</li>
+<li>immutable freeze on flush</li>
+</ul>
+<p>The memtable is not the only serving state. It is a write buffer and a short-range query source.</p>
+<h3 id="memtable-rotation">Memtable Rotation</h3>
+<p>When a memtable hits a size or age threshold:</p>
+<ol>
+<li>it is frozen</li>
+<li>a new mutable memtable becomes active</li>
+<li>the frozen memtable enters the flush queue</li>
+</ol>
+<p>Reads must consult:</p>
+<ul>
+<li>active memtable</li>
+<li>immutable memtables pending flush</li>
+<li>on-disk segments</li>
+</ul>
+<p>This is standard but important for correctness under concurrent writes and flushes.</p>
+<h2 id="11-4-latest-cache-design">11.4 Latest Cache Design</h2>
+<p>The latest cache is optimized for online reads.</p>
+<p>Each cache entry contains the resolved latest vector for an entity, for serving-enabled features only.</p>
+<h3 id="cache-representation">Cache Representation</h3>
+<pre><code class="language-text">latest_cache[tenant_id, entity_type, entity_id] -&gt; FeatureVectorSnapshot*</code></pre>
+<p>Where <code>FeatureVectorSnapshot</code> is immutable after publication.</p>
+<p>Update strategy:</p>
+<ol>
+<li>copy or build a new feature vector snapshot</li>
+<li>atomically swap pointer</li>
+<li>reclaim old snapshot through epoch-based reclamation or hazard pointers</li>
+</ol>
+<p>This gives:</p>
+<ul>
+<li>lock-free reads</li>
+<li>deterministic visibility</li>
+<li>no partial vector updates to readers</li>
+</ul>
+<h3 id="why-separate-latest-cache-from-historical-store">Why Separate Latest Cache from Historical Store</h3>
+<p>Because the access patterns are different:</p>
+<ul>
+<li>online inference wants packed latest state with tight latency</li>
+<li>historical joins want ordered timelines and scan pruning</li>
+</ul>
+<p>Trying to use one structure for both leads to worse behavior for each.</p>
+<h3 id="feature-group-packing">Feature Group Packing</h3>
+<p>For serving, features should be packable into named feature groups:</p>
+<ul>
+<li>group all features needed by a given model or service</li>
+<li>publish one compact vector per entity per feature group</li>
+<li>avoid rebuilding giant all-feature vectors when only one model cares</li>
+</ul>
+<p>This improves:</p>
+<ul>
+<li>cache density</li>
+<li>update cost</li>
+<li>shared-memory usability</li>
+</ul>
+<p>The metadata registry should allow one feature to belong to multiple serving groups if needed.</p>
+<h2 id="11-5-on-disk-segment-design">11.5 On-Disk Segment Design</h2>
+<p>Flushed memtables become immutable segments.</p>
+<p>Segments should be:</p>
+<ul>
+<li>sorted by primary key</li>
+<li>self-describing</li>
+<li>checksummed</li>
+<li>mmappable where appropriate</li>
+<li>split into metadata, index, and data blocks</li>
+</ul>
+<h3 id="segment-key-order">Segment Key Order</h3>
+<p>Logical ordering:</p>
+<pre><code class="language-text">(tenant_id,
+ entity_type,
+ entity_id,
+ feature_id,
+ event_time DESC,
+ system_time DESC,
+ sequence_no DESC)</code></pre>
+<p>Descending temporal order is intentional. It accelerates "find newest value before cutoff" operations.</p>
+<h3 id="segment-physical-layout">Segment Physical Layout</h3>
+<p>Recommended layout:</p>
+<pre><code class="language-text">Segment File
+  Header
+  Schema dictionary
+  Zone map metadata
+  Block index
+  Key block(s)
+  Value block(s)
+  Optional columnar projection block(s)
+  Bloom filters / existence filters
+  Footer</code></pre>
+<h3 id="hybrid-row-column-strategy">Hybrid Row + Column Strategy</h3>
+<p>For v1, the best design is hybrid:</p>
+<ul>
+<li>key index and revision chain stored in row-wise sorted blocks for as-of lookups</li>
+<li>optional columnar projections for value-heavy scans and Arrow export</li>
+</ul>
+<p>Pure columnar is awkward for hot bitemporal point retrieval. Pure row-store underdelivers on large training scans. Hybrid segments are the right tradeoff.</p>
+<h2 id="11-6-segment-metadata-and-pruning">11.6 Segment Metadata and Pruning</h2>
+<p>Each segment tracks:</p>
+<ul>
+<li>tenant/entity/feature coverage</li>
+<li>min/max event time</li>
+<li>min/max system time</li>
+<li>row count</li>
+<li>tombstone count</li>
+<li>compression scheme</li>
+<li>bloom filters for entity/feature membership</li>
+</ul>
+<p>This supports pruning before touching data blocks.</p>
+<h2 id="11-7-manifest">11.7 Manifest</h2>
+<p>The manifest is the durable catalog of engine state:</p>
+<ul>
+<li>active WAL segments</li>
+<li>immutable segment list</li>
+<li>compaction outputs</li>
+<li>checkpoint metadata</li>
+<li>retention watermarks</li>
+<li>format versions</li>
+</ul>
+<p>Manifest updates must be atomic. A common pattern is append-only manifest records with periodic snapshots.</p>
+<h2 id="11-8-on-disk-directory-layout">11.8 On-Disk Directory Layout</h2>
+<p>The storage layout on disk should be explicit from the start.</p>
+<p>Recommended structure:</p>
+<pre><code class="language-text">data/
+  node_id/
+    manifest/
+      manifest.log
+      manifest.snapshot
+    wal/
+      wal-000001.log
+      wal-000002.log
+    checkpoints/
+      checkpoint-000123/
+    segments/
+      partition-000/
+      partition-001/
+      ...
+    catalog/
+      metadata.db
+    tmp/
+      compaction/
+      restore/</code></pre>
+<p>Rules:</p>
+<ul>
+<li>immutable segment files are never modified in place</li>
+<li>compaction writes new files, then atomically swaps manifest state</li>
+<li>temporary files are distinguishable and safe to clean after crash recovery</li>
+</ul>
+<h2 id="11-9-encoding-and-type-system">11.9 Encoding and Type System</h2>
+<p>The feature engine should not begin with an unbounded type system.</p>
+<p>Recommended v1 supported types:</p>
+<ul>
+<li><code>bool</code></li>
+<li><code>int32</code>, <code>int64</code></li>
+<li><code>float32</code>, <code>float64</code></li>
+<li><code>string</code></li>
+<li>fixed-length numeric vector</li>
+<li>nullable variants of the above</li>
+</ul>
+<p>Additional complex types can follow later.</p>
+<p>Storage guidance:</p>
+<ul>
+<li>fixed-width types stored inline where possible</li>
+<li>variable-width values stored with offset tables</li>
+<li>fixed-length vectors encoded contiguously for fast serving</li>
+<li>nullability represented separately from tombstones</li>
+</ul>
+<p>Tombstones mean "no value should be visible." Null means "value exists but is unknown or intentionally null."</p>
+<h2 id="12-indexing-strategy">12. Indexing Strategy</h2>
+<p>The engine needs more than one index conceptually, even if they share files.</p>
+<h2 id="12-1-primary-temporal-index">12.1 Primary Temporal Index</h2>
+<p>Supports:</p>
+<ul>
+<li>as-of lookup by entity and feature</li>
+<li>historical scans for one entity/feature pair</li>
+</ul>
+<p>Primary key:</p>
+<pre><code class="language-text">(tenant, entity_type, entity_id, feature_id, event_time desc, system_time desc, sequence_no desc)</code></pre>
+<h2 id="12-2-entity-scoped-latest-index">12.2 Entity-Scoped Latest Index</h2>
+<p>Supports:</p>
+<ul>
+<li>get latest vector for entity</li>
+</ul>
+<p>Stored primarily in memory as the latest cache. Optionally persisted in checkpoint snapshots for fast recovery.</p>
+<h2 id="12-3-segment-existence-filters">12.3 Segment Existence Filters</h2>
+<p>Bloom or xor filters indicate whether a segment may contain:</p>
+<ul>
+<li>a given entity</li>
+<li>a given feature</li>
+<li>a given entity-feature pair</li>
+</ul>
+<p>This reduces unnecessary reads for sparse workloads.</p>
+<h2 id="12-4-optional-time-partitioning">12.4 Optional Time Partitioning</h2>
+<p>For large historical stores, time partitioning by coarse event-time buckets may be used to reduce scan scope. This must not break cross-bucket as-of lookup semantics.</p>
+<h2 id="13-query-engine-design">13. Query Engine Design</h2>
+<p>The query engine is operator-based, not SQL-first.</p>
+<p>Core operators:</p>
+<ul>
+<li><code>LatestVectorLookup</code></li>
+<li><code>AsOfLookup</code></li>
+<li><code>TimelineScan</code></li>
+<li><code>PointInTimeJoin</code></li>
+<li><code>WindowAggregate</code></li>
+<li><code>Project</code></li>
+<li><code>Filter</code></li>
+<li><code>ArrowMaterialize</code></li>
+</ul>
+<h2 id="13-1-latest-lookup-execution">13.1 Latest Lookup Execution</h2>
+<p>Path:</p>
+<ol>
+<li>look up entity in latest cache</li>
+<li>validate freshness constraints</li>
+<li>if missing or stale, optionally consult memtable and segments</li>
+<li>return packed vector</li>
+</ol>
+<p>The fast path should avoid touching disk.</p>
+<h2 id="13-2-as-of-lookup-execution">13.2 As-Of Lookup Execution</h2>
+<p>Given <code>(entity, feature, event_cutoff, system_cutoff)</code>:</p>
+<ol>
+<li>inspect memtable for matching revisions</li>
+<li>inspect candidate immutable segments selected by entity/feature filter and time pruning</li>
+<li>within each candidate, locate highest revision not exceeding cutoffs</li>
+<li>merge candidate answers across memtable and segments</li>
+<li>return the maximum valid version</li>
+</ol>
+<p>A loser-tree or heap merge across candidate iterators is appropriate.</p>
+<h2 id="13-3-point-in-time-join-algorithm">13.3 Point-in-Time Join Algorithm</h2>
+<p>This is the defining operator.</p>
+<p>Inputs:</p>
+<ul>
+<li>driving rows <code>(row_id, entity_id, label_time, optional system_cutoff)</code></li>
+<li>feature set</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>one output row per driving row with resolved feature values</li>
+</ul>
+<p>Execution strategy for v1:</p>
+<ol>
+<li>sort or bucket driving rows by entity and label time</li>
+<li>group requested features by physical layout and segment locality</li>
+<li>for each entity-feature combination, scan timelines once in descending time order</li>
+<li>advance driving row cursors to resolve maximal revision under cutoffs</li>
+<li>materialize Arrow batches incrementally</li>
+</ol>
+<p>This is closer to a merge over sorted timelines than to repeated key lookups. Repeated point lookups will not scale well for dataset builds.</p>
+<h3 id="vectorized-pit-join">Vectorized PIT Join</h3>
+<p>The query engine should operate on batches:</p>
+<ul>
+<li>batch driving rows into Arrow arrays</li>
+<li>resolve timestamps in tight loops</li>
+<li>keep value decoding vectorized where possible</li>
+</ul>
+<h3 id="join-semantics">Join Semantics</h3>
+<p>Default semantics should be left join with null fill:</p>
+<ul>
+<li>no matching revision before cutoffs -&gt; null</li>
+<li>tombstoned current version -&gt; null</li>
+</ul>
+<p>Configurable options:</p>
+<ul>
+<li>require full feature presence or fail</li>
+<li>apply feature-specific default value</li>
+<li>surface quality flags in output</li>
+</ul>
+<h2 id="13-4-window-reads-and-rolling-aggregates">13.4 Window Reads and Rolling Aggregates</h2>
+<p>The engine should support bounded windows for:</p>
+<ul>
+<li>rolling mean</li>
+<li>rolling sum</li>
+<li>count</li>
+<li>min/max</li>
+<li>last-N events</li>
+</ul>
+<p>These should operate over event time, constrained by system-time visibility.</p>
+<p>Example:</p>
+<p>"30-minute rolling mean as of event time T and system time S" means:</p>
+<ul>
+<li>scan events where <code>T - 30m &lt; event_time &lt;= T</code></li>
+<li>include only versions with <code>system_time &lt;= S</code></li>
+<li>use the visible revision for each contributing event</li>
+</ul>
+<p>This can get expensive. For v1, support built-in window operators only for frequently used cases.</p>
+<h2 id="13-5-derived-features">13.5 Derived Features</h2>
+<p>Derived features should be explicitly classified:</p>
+<h3 id="materialized-derived-features">Materialized Derived Features</h3>
+<p>Computed during ingestion or background jobs and stored as first-class feature events.</p>
+<p>Best for:</p>
+<ul>
+<li>high-read, low-computation formulas</li>
+<li>serving-critical features</li>
+</ul>
+<h3 id="read-time-derived-features">Read-Time Derived Features</h3>
+<p>Computed at query time from a bounded dependency graph.</p>
+<p>Best for:</p>
+<ul>
+<li>light arithmetic</li>
+<li>freshness-sensitive combinations</li>
+</ul>
+<h3 id="v1-rule">v1 Rule</h3>
+<p>Only allow deterministic, bounded, engine-native transforms in v1. No arbitrary Python UDFs in the core.</p>
+<h2 id="13-6-minimal-query-optimization">13.6 Minimal Query Optimization</h2>
+<p>The engine needs a narrow optimizer, not a general one.</p>
+<p>Optimization tasks:</p>
+<ul>
+<li>prune segments by tenant/entity/feature/time</li>
+<li>choose cache vs memtable vs segment lookup path</li>
+<li>batch requests by locality</li>
+<li>decide whether to use projected column blocks</li>
+<li>reorder feature retrieval for fewer scans</li>
+</ul>
+<h2 id="14-compaction-retention-and-garbage-collection">14. Compaction, Retention, and Garbage Collection</h2>
+<p>Compaction is mandatory in a log-structured engine.</p>
+<h2 id="14-1-compaction-goals">14.1 Compaction Goals</h2>
+<ul>
+<li>merge overlapping segments</li>
+<li>reduce read amplification</li>
+<li>eliminate duplicate writes</li>
+<li>coalesce obsolete revisions under retention policy</li>
+<li>rebuild bloom filters and summaries</li>
+</ul>
+<h2 id="14-2-bitemporal-retention-rules">14.2 Bitemporal Retention Rules</h2>
+<p>Retention is subtle because old revisions may still be needed.</p>
+<p>Possible policies:</p>
+<ul>
+<li>keep all revisions forever</li>
+<li>keep full bitemporal history for N days</li>
+<li>keep last K revisions per event</li>
+<li>keep only latest visible revision after audit window expires</li>
+</ul>
+<p>For regulated and audit-heavy users, aggressive revision pruning is dangerous. The default should be conservative.</p>
+<h2 id="14-3-compaction-safety-rules">14.3 Compaction Safety Rules</h2>
+<p>Compaction may only drop a revision if policy proves it can never affect an allowed query result.</p>
+<p>That requires considering:</p>
+<ul>
+<li>event-time windows</li>
+<li>system-time audit windows</li>
+<li>legal retention requirements</li>
+<li>recovery state</li>
+</ul>
+<h2 id="14-4-tombstone-handling">14.4 Tombstone Handling</h2>
+<p>Deletes become tombstones. Compaction may physically purge deleted state only after all relevant retention and visibility windows pass.</p>
+<h2 id="15-checkpointing-and-recovery">15. Checkpointing and Recovery</h2>
+<p>The system must behave like a database on restart.</p>
+<h2 id="15-1-checkpoint-design">15.1 Checkpoint Design</h2>
+<p>A checkpoint captures:</p>
+<ul>
+<li>manifest snapshot</li>
+<li>memtable snapshot or flush boundary</li>
+<li>latest cache snapshot metadata</li>
+<li>last durable LSN</li>
+</ul>
+<p>Two viable approaches:</p>
+<h3 id="approach-a-flush-based-checkpoint">Approach A: Flush-Based Checkpoint</h3>
+<ul>
+<li>freeze memtable</li>
+<li>flush it to segment</li>
+<li>persist manifest snapshot</li>
+<li>record durable LSN</li>
+</ul>
+<p>This is simpler and preferred for v1.</p>
+<h3 id="approach-b-snapshot-based-checkpoint">Approach B: Snapshot-Based Checkpoint</h3>
+<ul>
+<li>snapshot mutable structures without full flush</li>
+<li>replay WAL from checkpoint LSN</li>
+</ul>
+<p>This reduces write disruption but is more complex.</p>
+<h2 id="15-2-recovery-sequence">15.2 Recovery Sequence</h2>
+<p>On startup:</p>
+<ol>
+<li>load latest valid manifest snapshot</li>
+<li>discover immutable segments</li>
+<li>load checkpoint metadata</li>
+<li>replay WAL records after checkpoint LSN</li>
+<li>rebuild memtable</li>
+<li>rebuild or lazily warm latest cache</li>
+<li>mark engine ready for reads</li>
+</ol>
+<pre class="mermaid">flowchart TD
+    A[&quot;Start Engine&quot;] --&gt; B[&quot;Load Manifest Snapshot&quot;]
+    B --&gt; C[&quot;Open Immutable Segments&quot;]
+    C --&gt; D[&quot;Read Checkpoint Metadata&quot;]
+    D --&gt; E[&quot;Replay WAL &gt; checkpoint LSN&quot;]
+    E --&gt; F[&quot;Rebuild Memtable&quot;]
+    F --&gt; G[&quot;Restore Latest Cache&quot;]
+    G --&gt; H[&quot;Serve Traffic&quot;]</pre>
+<h2 id="15-3-recovery-guarantees">15.3 Recovery Guarantees</h2>
+<p>Under synchronous durability:</p>
+<ul>
+<li>no acknowledged write is lost</li>
+<li>duplicate replay does not create duplicate visible state if idempotency keys are present</li>
+<li>partial WAL tail corruption is detected and truncated to last valid record</li>
+</ul>
+<h2 id="15-4-fast-recovery-considerations">15.4 Fast Recovery Considerations</h2>
+<p>To bound restart time:</p>
+<ul>
+<li>checkpoint regularly</li>
+<li>snapshot latest cache metadata or persist latest index hints</li>
+<li>support lazy cache warming</li>
+<li>parallelize WAL replay and cache rebuild where safe</li>
+</ul>
+<h2 id="16-serving-layer-design">16. Serving Layer Design</h2>
+<p>The serving layer exposes the online path.</p>
+<h2 id="16-1-transport-options">16.1 Transport Options</h2>
+<ul>
+<li>gRPC for networked consumers</li>
+<li>shared memory for colocated low-latency consumers</li>
+<li>optional C++ embedded library mode for in-process usage</li>
+</ul>
+<h2 id="16-2-grpc-serving">16.2 gRPC Serving</h2>
+<p>gRPC is the default interoperable transport.</p>
+<p>Benefits:</p>
+<ul>
+<li>language-neutral</li>
+<li>streaming support</li>
+<li>TLS and auth ecosystem</li>
+<li>observability tooling</li>
+</ul>
+<p>Costs:</p>
+<ul>
+<li>serialization overhead</li>
+<li>memory copies unless carefully designed</li>
+</ul>
+<p>For most teams, gRPC is enough. Shared memory is for the highest-performance colocated deployments.</p>
+<h2 id="16-3-shared-memory-serving">16.3 Shared Memory Serving</h2>
+<p>The shared-memory path is an optimization layer, not the primary system contract.</p>
+<h3 id="shared-memory-use-case">Shared Memory Use Case</h3>
+<ul>
+<li>inference process and engine on same machine</li>
+<li>request rate high enough that serialization cost matters</li>
+<li>strict tail latency requirements</li>
+</ul>
+<h3 id="shared-memory-model">Shared Memory Model</h3>
+<p>Expose immutable feature vector pages in shared memory:</p>
+<ol>
+<li>engine maintains a shared-memory arena</li>
+<li>latest cache snapshot publication also publishes offsets into arena</li>
+<li>local client maps the shared segment read-only</li>
+<li>client reads vector contents with version stamp validation</li>
+</ol>
+<p>Key invariants:</p>
+<ul>
+<li>readers never observe partially written vectors</li>
+<li>published snapshots are immutable</li>
+<li>memory reclamation is epoch-based</li>
+</ul>
+<h3 id="why-not-make-shared-memory-the-only-serving-path">Why Not Make Shared Memory the Only Serving Path</h3>
+<p>Because it complicates deployment and security, and most users need remote RPC anyway.</p>
+<h2 id="16-4-latency-budget">16.4 Latency Budget</h2>
+<p>For a colocated latest lookup:</p>
+<ul>
+<li>request parsing / dispatch: 10-50 us</li>
+<li>entity lookup: 10-30 us</li>
+<li>vector materialization or pointer fetch: 10-50 us</li>
+<li>serialization: 0 us shared memory, 50-200 us gRPC/protobuf typical</li>
+</ul>
+<p>The architecture should preserve a sub-millisecond budget on the fast path.</p>
+<h2 id="16-5-serving-consistency-modes">16.5 Serving Consistency Modes</h2>
+<p>Recommended read modes:</p>
+<ul>
+<li><code>LATEST_VISIBLE</code>: current published snapshot</li>
+<li><code>AT_LEAST_LSN</code>: block until writes up to an LSN are visible</li>
+<li><code>BEST_EFFORT_FRESH</code>: return latest if within freshness bound</li>
+</ul>
+<p>This allows clients to choose between latency and visibility constraints.</p>
+<h2 id="17-metadata-and-control-plane">17. Metadata and Control Plane</h2>
+<p>The metadata layer is how users reason about features as a product, not just rows in storage.</p>
+<p>The metadata plane should be architecturally separate even if it shares a process with the data plane in v1.</p>
+<h2 id="17-1-metadata-objects">17.1 Metadata Objects</h2>
+<ul>
+<li>tenants</li>
+<li>entity types</li>
+<li>features</li>
+<li>feature groups</li>
+<li>transformation specs</li>
+<li>retention policies</li>
+<li>access control policies</li>
+<li>serving profiles</li>
+<li>ingestion sources</li>
+</ul>
+<h2 id="17-2-feature-registry-requirements">17.2 Feature Registry Requirements</h2>
+<p>Each feature definition should include:</p>
+<ul>
+<li>name and description</li>
+<li>type and encoding</li>
+<li>owner and tags</li>
+<li>serving enabled flag</li>
+<li>retention class</li>
+<li>source of truth</li>
+<li>dependency graph for derived features</li>
+<li>freshness SLA</li>
+<li>data quality expectations</li>
+</ul>
+<h2 id="17-3-schema-evolution">17.3 Schema Evolution</h2>
+<p>Schema changes must be explicit and versioned.</p>
+<p>Safe evolution examples:</p>
+<ul>
+<li>add new feature</li>
+<li>widen integer type</li>
+<li>add tags or metadata</li>
+</ul>
+<p>Riskier changes:</p>
+<ul>
+<li>changing entity key semantics</li>
+<li>changing feature type incompatibly</li>
+<li>changing transform behavior retroactively</li>
+</ul>
+<p>The registry should reject unsafe changes by default.</p>
+<h2 id="17-4-metadata-persistence-design">17.4 Metadata Persistence Design</h2>
+<p>Metadata traffic is tiny compared with feature traffic, so the control plane does not need the same storage engine.</p>
+<p>Recommended v1 design:</p>
+<ul>
+<li>store control-plane metadata in embedded SQLite</li>
+<li>wrap it in a typed C++ metadata service layer</li>
+<li>treat metadata changes as transactional and low-frequency</li>
+</ul>
+<p>Why this is the right tradeoff:</p>
+<ul>
+<li>avoids building two databases at once</li>
+<li>gives reliable transactions for registry state</li>
+<li>keeps the specialized engine focused on feature data</li>
+</ul>
+<p>The metadata store should hold:</p>
+<ul>
+<li>tenants</li>
+<li>feature definitions</li>
+<li>feature groups</li>
+<li>transform specs</li>
+<li>auth and ACL mappings</li>
+<li>retention policies</li>
+<li>source connector definitions</li>
+</ul>
+<p>The engine manifest and WAL remain separate from metadata.db. They serve different purposes.</p>
+<h2 id="17-5-data-quality-and-freshness-contracts">17.5 Data Quality and Freshness Contracts</h2>
+<p>Feature definitions should be able to declare:</p>
+<ul>
+<li>maximum tolerated staleness</li>
+<li>whether null is allowed</li>
+<li>accepted source list</li>
+<li>expected event-time lag distribution</li>
+<li>monotonicity constraints where relevant</li>
+</ul>
+<p>The ingestion and serving layers should expose violations as quality flags rather than silently hiding them.</p>
+<h2 id="18-python-sdk-and-language-bindings">18. Python SDK and Language Bindings</h2>
+<p>The engine should be easy to adopt from Python while keeping logic out of Python.</p>
+<h2 id="18-1-sdk-responsibilities">18.1 SDK Responsibilities</h2>
+<ul>
+<li>feature registration APIs</li>
+<li>ingestion client</li>
+<li>online lookup client</li>
+<li>historical dataset requests</li>
+<li>Arrow/Pandas/Polars conversion helpers</li>
+<li>auth and config handling</li>
+</ul>
+<h2 id="18-2-sdk-non-responsibilities">18.2 SDK Non-Responsibilities</h2>
+<ul>
+<li>local feature computation engine</li>
+<li>fallback storage layer</li>
+<li>business logic replication</li>
+</ul>
+<h2 id="18-3-data-exchange-format">18.3 Data Exchange Format</h2>
+<p>Use Arrow as the canonical batch interchange format for:</p>
+<ul>
+<li>historical export</li>
+<li>batch online retrieval</li>
+<li>zero-copy handoff into Python analytics libraries where possible</li>
+</ul>
+<p>This is a major adoption advantage.</p>
+<h2 id="18-4-connector-contract">18.4 Connector Contract</h2>
+<p>All connectors should be thin adapters over the same core APIs.</p>
+<p>They should not implement their own:</p>
+<ul>
+<li>point-in-time logic</li>
+<li>deduplication semantics</li>
+<li>system-time assignment rules</li>
+<li>feature registry interpretation</li>
+</ul>
+<p>If connector behavior diverges from core engine behavior, temporal correctness will drift.</p>
+<h2 id="19-connectors-and-ecosystem-integrations">19. Connectors and Ecosystem Integrations</h2>
+<p>End-to-end usability requires connectors.</p>
+<p>Recommended connectors:</p>
+<ul>
+<li>Kafka source connector</li>
+<li>file import for Parquet/Arrow/CSV</li>
+<li>DuckDB table function or connector</li>
+<li>Polars integration via Arrow</li>
+<li>optional Spark connector for large-scale driving datasets</li>
+</ul>
+<p>The database should remain the system of record for features; connectors should not duplicate logic in incompatible ways.</p>
+<h2 id="20-security-isolation-and-multi-tenancy">20. Security, Isolation, and Multi-Tenancy</h2>
+<p>Even if v1 is single-tenant by deployment, the design should anticipate isolation.</p>
+<h2 id="20-1-security-requirements">20.1 Security Requirements</h2>
+<ul>
+<li>TLS for network traffic</li>
+<li>token or mTLS-based auth</li>
+<li>tenant scoping in every request</li>
+<li>audit logs for admin operations</li>
+<li>encryption at rest for WAL and segments where required</li>
+</ul>
+<h2 id="20-2-multi-tenancy-models">20.2 Multi-Tenancy Models</h2>
+<h3 id="logical-multi-tenancy">Logical Multi-Tenancy</h3>
+<ul>
+<li>shared engine</li>
+<li>tenant_id in all keys</li>
+<li>quota and isolation controls</li>
+</ul>
+<h3 id="physical-multi-tenancy">Physical Multi-Tenancy</h3>
+<ul>
+<li>one deployment per tenant or environment</li>
+</ul>
+<p>v1 can start with physical isolation, but logical tenancy should exist in the key model.</p>
+<h2 id="20-3-resource-isolation">20.3 Resource Isolation</h2>
+<p>Need controls for:</p>
+<ul>
+<li>max ingest rate per tenant</li>
+<li>query concurrency</li>
+<li>cache quotas</li>
+<li>compaction IO budgets</li>
+</ul>
+<h2 id="21-observability-and-operations">21. Observability and Operations</h2>
+<p>A serious system needs first-class observability.</p>
+<h2 id="21-1-metrics">21.1 Metrics</h2>
+<p>Required metrics:</p>
+<ul>
+<li>ingest QPS</li>
+<li>ACK latency by durability mode</li>
+<li>WAL append latency</li>
+<li>WAL fsync latency</li>
+<li>memtable size and flush frequency</li>
+<li>compaction backlog and throughput</li>
+<li>latest cache hit rate</li>
+<li>online lookup latency</li>
+<li>historical query throughput</li>
+<li>segment count and read amplification</li>
+<li>checkpoint duration</li>
+<li>recovery duration</li>
+<li>stale data rate vs freshness SLAs</li>
+</ul>
+<h2 id="21-1-1-health-states">21.1.1 Health States</h2>
+<p>The node should expose machine-readable health states:</p>
+<ul>
+<li><code>HEALTHY</code></li>
+<li><code>DEGRADED_WRITES</code></li>
+<li><code>DEGRADED_READS</code></li>
+<li><code>COMPACTION_BACKLOG</code></li>
+<li><code>RECOVERING</code></li>
+<li><code>READ_ONLY</code></li>
+</ul>
+<p>These states should be derived from explicit thresholds, not ad hoc log inspection.</p>
+<h2 id="21-2-structured-logging">21.2 Structured Logging</h2>
+<p>Structured logs should cover:</p>
+<ul>
+<li>write acceptance and rejection</li>
+<li>recovery steps</li>
+<li>checkpoint and compaction lifecycle</li>
+<li>schema changes</li>
+<li>authentication events</li>
+<li>query failures and timeouts</li>
+</ul>
+<h2 id="21-3-tracing">21.3 Tracing</h2>
+<p>Distributed tracing should span:</p>
+<ul>
+<li>ingestion request</li>
+<li>WAL commit</li>
+<li>query planning</li>
+<li>segment reads</li>
+<li>cache miss fallback</li>
+<li>response serialization</li>
+</ul>
+<h2 id="21-4-admin-tooling">21.4 Admin Tooling</h2>
+<p>Operators need:</p>
+<ul>
+<li>health endpoints</li>
+<li>compaction status</li>
+<li>checkpoint trigger and status</li>
+<li>backup trigger and restore tooling</li>
+<li>retention inspection</li>
+<li>cache memory inspection</li>
+</ul>
+<h2 id="22-backup-restore-and-disaster-recovery">22. Backup, Restore, and Disaster Recovery</h2>
+<p>This is separate from crash recovery.</p>
+<h2 id="22-1-backup-scope">22.1 Backup Scope</h2>
+<p>Backups must include:</p>
+<ul>
+<li>manifest snapshots</li>
+<li>immutable segments</li>
+<li>metadata catalog</li>
+<li>WAL required since last checkpoint or backup boundary</li>
+</ul>
+<h2 id="22-2-restore-workflow">22.2 Restore Workflow</h2>
+<ol>
+<li>restore manifest and segments</li>
+<li>restore metadata</li>
+<li>replay retained WAL if needed</li>
+<li>verify checksums and watermarks</li>
+<li>resume service in read-only or read-write mode</li>
+</ol>
+<h2 id="22-3-disaster-recovery-targets">22.3 Disaster Recovery Targets</h2>
+<p>These are deployment-specific, but the system should document:</p>
+<ul>
+<li>RPO by durability mode</li>
+<li>RTO by data size and checkpoint cadence</li>
+<li>backup consistency guarantees</li>
+</ul>
+<h2 id="23-deployment-topologies">23. Deployment Topologies</h2>
+<h2 id="23-1-embedded-mode">23.1 Embedded Mode</h2>
+<p>The engine runs in-process with the application.</p>
+<p>Pros:</p>
+<ul>
+<li>lowest latency</li>
+<li>simplest deployment</li>
+</ul>
+<p>Cons:</p>
+<ul>
+<li>reduced isolation</li>
+<li>harder upgrades</li>
+</ul>
+<p>Suitable for:</p>
+<ul>
+<li>experiments</li>
+<li>single-service colocated inference</li>
+</ul>
+<h2 id="23-2-single-node-service-mode">23.2 Single-Node Service Mode</h2>
+<p>The engine runs as a standalone service on one machine.</p>
+<p>Pros:</p>
+<ul>
+<li>strong operational simplicity</li>
+<li>easiest credible v1</li>
+</ul>
+<p>Cons:</p>
+<ul>
+<li>limited scale and availability</li>
+</ul>
+<p>This should be the initial product target.</p>
+<h2 id="23-3-split-service-mode">23.3 Split Service Mode</h2>
+<p>Separate processes for:</p>
+<ul>
+<li>metadata/control plane</li>
+<li>storage/query server</li>
+<li>ingestion workers</li>
+</ul>
+<p>Useful once the product grows, but can still be on one host.</p>
+<h2 id="23-4-recommended-v1-deployment-diagram">23.4 Recommended v1 Deployment Diagram</h2>
+<pre class="mermaid">flowchart LR
+    A[&quot;Python / C++ Clients&quot;] --&gt; B[&quot;gRPC API Server&quot;]
+    C[&quot;Kafka Connector&quot;] --&gt; B
+    B --&gt; D[&quot;Metadata Service&quot;]
+    B --&gt; E[&quot;Write Coordinator&quot;]
+    B --&gt; F[&quot;Historical Query Coordinator&quot;]
+    D --&gt; G[&quot;SQLite Metadata DB&quot;]
+    E --&gt; H[&quot;Shared WAL&quot;]
+    H --&gt; I[&quot;Partitioned Engine&quot;]
+    F --&gt; I
+    I --&gt; J[&quot;Segments + Checkpoints&quot;]
+    I --&gt; K[&quot;Latest Cache&quot;]
+    L[&quot;Prometheus / Admin&quot;] --&gt; B
+    L --&gt; I</pre>
+<h2 id="24-distributed-architecture-v2">24. Distributed Architecture (v2)</h2>
+<p>The logical model should survive scale-out.</p>
+<h2 id="24-1-why-distributed-v2-not-v1">24.1 Why Distributed v2, Not v1</h2>
+<p>Distributed systems multiply complexity:</p>
+<ul>
+<li>consensus</li>
+<li>replica lag</li>
+<li>query routing</li>
+<li>compaction coordination</li>
+<li>rebalancing</li>
+<li>failure modes</li>
+</ul>
+<p>The core product risk is not "can it shard" but "is the semantics and local engine actually correct and fast."</p>
+<h2 id="24-2-sharding-strategy">24.2 Sharding Strategy</h2>
+<p>Shard primarily by:</p>
+<pre><code class="language-text">(tenant_id, entity_type, entity_id_hash)</code></pre>
+<p>This keeps:</p>
+<ul>
+<li>latest vectors local to one shard</li>
+<li>most point lookups local</li>
+<li>per-entity timelines local</li>
+</ul>
+<p>Historical dataset builds that touch many entities become multi-shard fan-out jobs.</p>
+<h2 id="24-3-replica-roles">24.3 Replica Roles</h2>
+<p>Per shard:</p>
+<ul>
+<li>one leader for writes</li>
+<li>one or more followers for failover and read scale</li>
+</ul>
+<p>Replication should be WAL-based.</p>
+<h2 id="24-4-distributed-write-path">24.4 Distributed Write Path</h2>
+<ol>
+<li>route write to shard leader</li>
+<li>append to leader WAL</li>
+<li>replicate WAL record to quorum or designated followers</li>
+<li>commit according to durability policy</li>
+<li>apply locally</li>
+<li>ACK</li>
+</ol>
+<p>Consensus protocol choice can be Raft or an equivalent replicated log. Do not invent a novel consensus layer.</p>
+<h2 id="24-5-distributed-query-routing">24.5 Distributed Query Routing</h2>
+<h3 id="latest-reads">Latest Reads</h3>
+<p>Route by entity hash to one shard.</p>
+<h3 id="historical-reads">Historical Reads</h3>
+<p>Options:</p>
+<ul>
+<li>coordinator fans out to relevant shards</li>
+<li>batch dataset builder runs near data</li>
+</ul>
+<p>The second option is better for large PIT joins.</p>
+<h2 id="24-6-rebalancing">24.6 Rebalancing</h2>
+<p>Need support for:</p>
+<ul>
+<li>adding nodes</li>
+<li>moving shard ranges</li>
+<li>preserving snapshot consistency during migration</li>
+</ul>
+<p>This is a later-stage problem and should not distort v1 storage design.</p>
+<h2 id="25-consistency-model">25. Consistency Model</h2>
+<h2 id="25-1-write-consistency">25.1 Write Consistency</h2>
+<p>Within a single node:</p>
+<ul>
+<li>writes become visible after WAL durability gate and cache publication</li>
+<li>monotonic visibility by LSN</li>
+</ul>
+<p>In distributed mode:</p>
+<ul>
+<li>writes visible after leader commit</li>
+<li>follower visibility may lag unless read-your-writes mode is requested</li>
+</ul>
+<h2 id="25-2-read-consistency">25.2 Read Consistency</h2>
+<p>The system should define read behavior explicitly:</p>
+<ul>
+<li>online latest reads are linearizable only in single-node mode unless distributed read protocol enforces otherwise</li>
+<li>historical queries execute against a snapshot defined by manifest state and system-time cutoff</li>
+</ul>
+<h2 id="25-3-snapshot-semantics">25.3 Snapshot Semantics</h2>
+<p>Historical jobs should pin:</p>
+<ul>
+<li>manifest version</li>
+<li>checkpoint/LSN boundary</li>
+<li>explicit system-time cutoff</li>
+</ul>
+<p>This guarantees repeatable dataset generation.</p>
+<h2 id="25-4-batch-visibility-rules">25.4 Batch Visibility Rules</h2>
+<p>For a successful single-entity batch write:</p>
+<ul>
+<li>either all records in that batch become visible together</li>
+<li>or none do</li>
+</ul>
+<p>Visibility boundary:</p>
+<ul>
+<li>online latest cache sees one publication event</li>
+<li>historical queries at or after the commit watermark see the whole batch</li>
+</ul>
+<p>This matters when multiple features must correspond to one event snapshot.</p>
+<h2 id="26-detailed-end-to-end-flows">26. Detailed End-to-End Flows</h2>
+<h2 id="26-1-end-to-end-write-flow">26.1 End-to-End Write Flow</h2>
+<p>Input event:</p>
+<pre><code class="language-text">entity_id = AAPL
+feature_id = order_book_imbalance
+event_time = 2026-03-08T14:30:00.250Z
+value = 0.13
+write_id = source-17-offset-8812</code></pre>
+<p>Steps:</p>
+<ol>
+<li>client sends event over gRPC or connector</li>
+<li>ingestion layer validates tenant, feature existence, value type, and auth</li>
+<li>write coordinator stamps <code>system_time</code> and internal <code>sequence_no</code></li>
+<li>coordinator appends WAL record and waits per durability mode</li>
+<li>memtable applies record</li>
+<li>latest cache recomputes entity snapshot if feature is serving-enabled</li>
+<li>request ACKs with committed LSN</li>
+<li>background flush later writes memtable contents into immutable segment</li>
+</ol>
+<h2 id="26-2-end-to-end-historical-join-flow">26.2 End-to-End Historical Join Flow</h2>
+<p>Input:</p>
+<ul>
+<li>training rows with <code>(row_id, entity_id, label_time)</code></li>
+<li>requested feature set</li>
+<li>training snapshot system cutoff</li>
+</ul>
+<p>Steps:</p>
+<ol>
+<li>historical query API receives dataset request</li>
+<li>planner resolves feature metadata and physical layout</li>
+<li>driving rows are partitioned by entity hash or sorted by entity and label time</li>
+<li>engine prunes segments by entity/feature/time range</li>
+<li>PIT join operator scans timelines and resolves visible revisions</li>
+<li>results materialize in Arrow batches</li>
+<li>batches stream to client or persist to output storage</li>
+<li>job metadata records manifest version and cutoff for reproducibility</li>
+</ol>
+<h2 id="26-3-end-to-end-crash-recovery-flow">26.3 End-to-End Crash Recovery Flow</h2>
+<ol>
+<li>engine restarts after crash</li>
+<li>manifest snapshot loaded</li>
+<li>immutable segments reopened</li>
+<li>checkpoint LSN determined</li>
+<li>WAL replay starts after checkpoint LSN</li>
+<li>partial tail record, if any, is discarded after checksum failure</li>
+<li>memtable state reconstructed</li>
+<li>latest cache rebuilt from replayed records or loaded snapshot</li>
+<li>serving resumes</li>
+</ol>
+<h2 id="26-4-end-to-end-shared-memory-read-flow">26.4 End-to-End Shared Memory Read Flow</h2>
+<ol>
+<li>colocated client maps shared arena</li>
+<li>client asks engine control socket or gRPC for current vector descriptor</li>
+<li>engine returns <code>(entity_version, offset, length, format)</code></li>
+<li>client validates descriptor version</li>
+<li>client reads immutable vector directly</li>
+<li>client revalidates version if needed for lock-free safety</li>
+</ol>
+<h2 id="27-performance-engineering-strategy">27. Performance Engineering Strategy</h2>
+<p>The project will only be credible if performance claims are measured and repeatable.</p>
+<h2 id="27-1-benchmark-categories">27.1 Benchmark Categories</h2>
+<ul>
+<li>single-row write throughput</li>
+<li>batch/stream write throughput</li>
+<li>WAL fsync latency</li>
+<li>latest lookup p50/p95/p99</li>
+<li>historical as-of lookup latency</li>
+<li>PIT join throughput on realistic datasets</li>
+<li>recovery time vs WAL size</li>
+<li>compaction impact on tail latency</li>
+</ul>
+<h2 id="27-2-benchmark-workloads">27.2 Benchmark Workloads</h2>
+<p>Need synthetic and realistic workloads:</p>
+<ul>
+<li>sparse high-cardinality entities</li>
+<li>dense low-cardinality entities</li>
+<li>out-of-order updates</li>
+<li>late correction-heavy streams</li>
+<li>mixed online reads and background historical jobs</li>
+</ul>
+<h2 id="27-3-performance-budget-ownership">27.3 Performance Budget Ownership</h2>
+<p>Each subsystem should own a measurable budget:</p>
+<ul>
+<li>WAL append</li>
+<li>cache publication</li>
+<li>segment decode</li>
+<li>pruning effectiveness</li>
+<li>query operator batch size</li>
+</ul>
+<h2 id="27-4-capacity-planning-knobs">27.4 Capacity Planning Knobs</h2>
+<p>Operators should be able to tune:</p>
+<ul>
+<li>number of local partitions</li>
+<li>memtable size per partition</li>
+<li>WAL segment size</li>
+<li>checkpoint cadence</li>
+<li>compaction concurrency</li>
+<li>cache memory budget</li>
+<li>query batch size</li>
+<li>background IO budget</li>
+</ul>
+<p>These knobs should have documented defaults and expected tradeoffs.</p>
+<h2 id="28-failure-modes-and-risk-analysis">28. Failure Modes and Risk Analysis</h2>
+<h2 id="28-1-data-correctness-risks">28.1 Data Correctness Risks</h2>
+<ul>
+<li>wrong as-of selection under equal timestamps</li>
+<li>pruning bugs that exclude valid revisions</li>
+<li>duplicate write visibility</li>
+<li>incorrect handling of late corrections</li>
+<li>compaction dropping audit-relevant versions</li>
+</ul>
+<p>These are more dangerous than raw performance issues.</p>
+<h2 id="28-1-1-correctness-validation-strategy">28.1.1 Correctness Validation Strategy</h2>
+<p>The system should be validated with:</p>
+<ul>
+<li>property tests for as-of selection</li>
+<li>crash-recovery tests with injected faults</li>
+<li>compaction equivalence tests comparing pre/post query answers</li>
+<li>deterministic replay tests from WAL</li>
+<li>differential tests against a simple reference implementation</li>
+</ul>
+<h2 id="28-2-operational-risks">28.2 Operational Risks</h2>
+<ul>
+<li>WAL growth outpacing checkpoint cadence</li>
+<li>compaction starvation</li>
+<li>latest cache memory blowup</li>
+<li>recovery times becoming unacceptable</li>
+<li>long historical queries starving serving traffic</li>
+</ul>
+<h2 id="28-3-product-risks">28.3 Product Risks</h2>
+<ul>
+<li>trying to become a generic SQL engine too early</li>
+<li>pushing distributed clustering before the local engine is good</li>
+<li>exposing arbitrary transforms that break determinism</li>
+<li>overcommitting to ultra-low-latency shared memory before general adoption</li>
+</ul>
+<h2 id="29-design-tradeoffs">29. Design Tradeoffs</h2>
+<h2 id="29-1-lsm-vs-b-tree">29.1 LSM vs B-Tree</h2>
+<p>Chosen: log-structured / LSM-like.</p>
+<p>Reason:</p>
+<ul>
+<li>append-heavy workload</li>
+<li>immutable history</li>
+<li>simpler recovery and compaction model</li>
+<li>better fit for correction-heavy temporal data</li>
+</ul>
+<p>Tradeoff:</p>
+<ul>
+<li>compaction complexity</li>
+<li>read amplification without good pruning</li>
+</ul>
+<h2 id="29-2-hybrid-segment-layout-vs-pure-columnar">29.2 Hybrid Segment Layout vs Pure Columnar</h2>
+<p>Chosen: hybrid.</p>
+<p>Reason:</p>
+<ul>
+<li>as-of retrieval needs fast temporal indexing</li>
+<li>training exports benefit from columnar materialization</li>
+</ul>
+<p>Tradeoff:</p>
+<ul>
+<li>more complex segment writer</li>
+</ul>
+<h2 id="29-3-dedicated-latest-cache-vs-on-demand-resolution">29.3 Dedicated Latest Cache vs On-Demand Resolution</h2>
+<p>Chosen: dedicated latest cache.</p>
+<p>Reason:</p>
+<ul>
+<li>online serving should not scan histories repeatedly</li>
+<li>packed snapshots give better latency predictability</li>
+</ul>
+<p>Tradeoff:</p>
+<ul>
+<li>memory overhead</li>
+<li>extra write amplification on serving-enabled features</li>
+</ul>
+<h2 id="29-4-narrow-query-model-vs-full-sql">29.4 Narrow Query Model vs Full SQL</h2>
+<p>Chosen: narrow query model.</p>
+<p>Reason:</p>
+<ul>
+<li>stronger product clarity</li>
+<li>avoids building a warehouse by accident</li>
+<li>lets engineering effort focus on the unique operator: PIT joins</li>
+</ul>
+<h2 id="30-recommended-v1-scope">30. Recommended v1 Scope</h2>
+<p>To keep the first version credible and finishable, v1 should include:</p>
+<ul>
+<li>single-node service</li>
+<li>WAL with sync and group-commit modes</li>
+<li>memtable + immutable segments + manifest</li>
+<li>latest cache with lock-free reads</li>
+<li>gRPC ingest and online lookup APIs</li>
+<li>historical as-of lookup and PIT join API</li>
+<li>Arrow export</li>
+<li>conservative compaction</li>
+<li>checkpoints and crash recovery</li>
+<li>Python SDK</li>
+<li>metrics and basic admin endpoints</li>
+</ul>
+<p>v1 should not include:</p>
+<ul>
+<li>clustering</li>
+<li>general SQL engine</li>
+<li>arbitrary UDFs</li>
+<li>cross-region replication</li>
+<li>shared-memory serving if it blocks progress</li>
+</ul>
+<p>Shared memory can be a v1.1 feature if the core engine is already solid.</p>
+<h2 id="31-recommended-repository-and-file-structure">31. Recommended Repository and File Structure</h2>
+<p>Even before code exists, architecture should imply code boundaries and a predictable repository layout.</p>
+<p>The source tree should separate:</p>
+<ul>
+<li>engine internals</li>
+<li>external service boundaries</li>
+<li>public contracts</li>
+<li>connectors and SDKs</li>
+<li>tests and benchmarks</li>
+<li>operational assets and packaging</li>
+</ul>
+<p>Recommended source-tree layout:</p>
+<pre><code class="language-text">project-root/
+  README.md
+  LICENSE
+  CONTRIBUTING.md
+  AGENTS.md
+  CMakeLists.txt
+  cmake/
+    toolchains/
+    modules/
+  docs/
+    bitemporal-feature-engine-spec.md
+    bitemporal-feature-engine-spec.html
+    bitemporal-feature-engine-api-contracts.md
+    bitemporal-feature-engine-implementation-plan.md
+    adr/
+      README.md
+      0001-product-boundary-and-query-model.md
+      0002-bitemporal-data-model-and-version-selection.md
+      0003-v1-node-architecture-shared-wal-local-partitions.md
+      0004-hybrid-storage-and-lock-free-latest-cache.md
+      0005-metadata-plane-sdk-boundary-arrow-interchange.md
+      0006-checkpointing-recovery-compaction-retention.md
+      0007-distributed-evolution-path-and-replication-model.md
+  proto/
+    common.proto
+    metadata.proto
+    ingestion.proto
+    serving.proto
+    historical.proto
+    admin.proto
+  engine/
+    common/
+      status/
+      logging/
+      metrics/
+      config/
+    clock/
+    types/
+    ids/
+    catalog/
+    wal/
+    manifest/
+    memtable/
+    segment/
+      format/
+      writer/
+      reader/
+      index/
+      projection/
+    cache/
+    query/
+      operators/
+      planner/
+      execution/
+    compaction/
+    retention/
+    recovery/
+    checkpoint/
+    storage/
+    transport/
+    auth/
+  server/
+    grpc/
+    admin/
+    process/
+  connectors/
+    kafka/
+    file_import/
+    duckdb/
+  sdk/
+    python/
+      src/
+      tests/
+  tools/
+    data_gen/
+    fault_injection/
+    benchmark_runner/
+    render_spec_html.py
+  deploy/
+    config/
+    systemd/
+    docker/
+    kubernetes/
+  bench/
+    workloads/
+    reports/
+  tests/
+    unit/
+    integration/
+    recovery/
+    correctness/
+    performance/
+    e2e/
+  third_party/</code></pre>
+<h3 id="31-1-directory-responsibilities">31.1 Directory Responsibilities</h3>
+<p>Recommended ownership by top-level directory:</p>
+<ul>
+<li><code>docs/</code>: source-of-truth architecture and product documentation</li>
+<li><code>proto/</code>: transport contracts and wire-level schemas</li>
+<li><code>engine/</code>: database internals and reusable core libraries</li>
+<li><code>server/</code>: network-facing binaries and process startup</li>
+<li><code>connectors/</code>: ingestion and interoperability adapters</li>
+<li><code>sdk/</code>: user-facing language bindings</li>
+<li><code>tools/</code>: local utilities for rendering, benchmarking, and failure injection</li>
+<li><code>deploy/</code>: packaging and runtime deployment assets</li>
+<li><code>bench/</code>: benchmark scenarios, datasets, and reports</li>
+<li><code>tests/</code>: all automated correctness and system test layers</li>
+</ul>
+<h3 id="31-2-binary-targets">31.2 Binary Targets</h3>
+<p>The repository should eventually produce a small number of explicit binaries:</p>
+<ul>
+<li><code>featured</code>: main server process</li>
+<li><code>featurectl</code>: admin and operational CLI</li>
+<li><code>feature-bench</code>: benchmark harness</li>
+<li>connector-specific binaries where needed</li>
+</ul>
+<h3 id="31-3-runtime-filesystem-layout">31.3 Runtime Filesystem Layout</h3>
+<p>The runtime layout described earlier in the storage section is separate from the source tree.</p>
+<p>Source tree:</p>
+<ul>
+<li>what developers build and version</li>
+</ul>
+<p>Runtime tree:</p>
+<ul>
+<li>what the deployed node writes to disk during operation</li>
+</ul>
+<p>That runtime layout should remain:</p>
+<pre><code class="language-text">data/
+  node_id/
+    manifest/
+    wal/
+    checkpoints/
+    segments/
+    catalog/
+    tmp/</code></pre>
+<p>Keeping the source structure and the runtime storage structure distinct will make packaging, backup, and operational docs much cleaner.</p>
+<h2 id="31-4-test-architecture">31.4 Test Architecture</h2>
+<p>The project should plan for the following test layers:</p>
+<ul>
+<li>unit tests for time comparison, encoding, and selection rules</li>
+<li>engine tests for WAL, flush, compaction, and recovery</li>
+<li>query correctness tests for PIT joins and window reads</li>
+<li>concurrency tests for cache publication and memtable rotation</li>
+<li>fault-injection tests for crash recovery</li>
+<li>benchmark harnesses with reproducible seeds and datasets</li>
+</ul>
+<p>The test strategy matters because the hardest bugs here are semantic, not just syntactic.</p>
+<h2 id="32-adrs-that-should-exist-early">32. ADRs That Should Exist Early</h2>
+<p>Architecture decision records should be written for:</p>
+<ul>
+<li>temporal key format</li>
+<li>WAL format</li>
+<li>segment file layout</li>
+<li>latest cache memory management strategy</li>
+<li>checkpoint strategy</li>
+<li>compaction retention semantics</li>
+<li>Arrow as canonical interchange</li>
+<li>distributed replication protocol choice</li>
+</ul>
+<h2 id="33-open-questions">33. Open Questions</h2>
+<p>These are real decisions, not missing thought.</p>
+<ol>
+<li>Should <code>system_time</code> always be server-assigned, or can trusted upstream systems provide it?</li>
+<li>How much of the latest cache should be persisted vs rebuilt on restart?</li>
+<li>What compression scheme best balances scan throughput and point lookup latency?</li>
+<li>Should feature groups be mandatory for packing online vectors efficiently?</li>
+<li>What is the exact retention contract for audit-heavy users?</li>
+<li>Is shared memory worth supporting in v1 or should embedded mode cover the same need first?</li>
+<li>For distributed mode, which reads truly need linearizability vs session consistency?</li>
+</ol>
+<h2 id="34-bottom-line">34. Bottom Line</h2>
+<p>The correct mental model for this product is:</p>
+<ul>
+<li>a specialized ML feature database</li>
+<li>with bitemporal semantics at its core</li>
+<li>durable like a database</li>
+<li>queryable like a narrow analytical engine</li>
+<li>servable like a low-latency online store</li>
+<li>extensible to distributed scale later</li>
+</ul>
+<p>If built well, it can occupy a real gap between:</p>
+<ul>
+<li>warehouse-based historical feature systems that are too slow or temporally awkward</li>
+<li>cache-like online stores that do not preserve history or auditability</li>
+<li>feature-store control planes that depend on weaker storage substrates underneath</li>
+</ul>
+<p>The differentiator is not "another feature store UI." The differentiator is a serious storage and query engine whose semantics directly match how ML features behave in the real world.</p>
+    </main>
+  </div>
+</body>
+</html>
