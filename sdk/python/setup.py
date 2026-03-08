@@ -44,7 +44,7 @@ class build_py(_build_py):
             self._ensure_executable(dest_binary)
             return
 
-        repo_root = package_root.parents[1]
+        repo_root = self._discover_repo_root(package_root)
         build_dir = Path(
             os.environ.get("MXDB_FEATURECTL_BUILD_DIR", str(repo_root / "build-wheel"))
         )
@@ -83,6 +83,23 @@ class build_py(_build_py):
             return
         mode = path.stat().st_mode
         path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    @staticmethod
+    def _discover_repo_root(package_root: Path) -> Path:
+        env_repo_root = os.environ.get("MXDB_REPO_ROOT")
+        if env_repo_root:
+            repo_root = Path(env_repo_root).resolve()
+            if (repo_root / "CMakeLists.txt").exists() and (repo_root / "engine").exists():
+                return repo_root
+
+        for candidate in [package_root, *package_root.parents]:
+            if (candidate / "CMakeLists.txt").exists() and (candidate / "engine").exists():
+                return candidate
+
+        raise FileNotFoundError(
+            "Repository root with CMakeLists.txt + engine/ was not found while "
+            "building mxdb wheel. Set MXDB_FEATURECTL_BIN or MXDB_REPO_ROOT."
+        )
 
 
 if _bdist_wheel is not None:

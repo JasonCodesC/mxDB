@@ -35,10 +35,27 @@ def find_built_binary(build_dir: Path) -> Path:
     raise FileNotFoundError(f"featurectl binary not found under {build_dir}")
 
 
+def discover_repo_root(start: Path) -> Path:
+    env_repo_root = os.environ.get("MXDB_REPO_ROOT")
+    if env_repo_root:
+        repo_root = Path(env_repo_root).resolve()
+        if (repo_root / "CMakeLists.txt").exists() and (repo_root / "engine").exists():
+            return repo_root
+
+    for candidate in [start, *start.parents]:
+        if (candidate / "CMakeLists.txt").exists() and (candidate / "engine").exists():
+            return candidate
+
+    raise FileNotFoundError(
+        "Could not locate repository root containing CMakeLists.txt and engine/. "
+        "Set MXDB_REPO_ROOT explicitly."
+    )
+
+
 def main() -> int:
     script_path = Path(__file__).resolve()
     package_root = script_path.parents[1]  # sdk/python
-    repo_root = script_path.parents[3]  # repository root
+    repo_root = discover_repo_root(package_root)
 
     build_dir = Path(
         os.environ.get("MXDB_FEATURECTL_BUILD_DIR", str(repo_root / "build-wheel"))
