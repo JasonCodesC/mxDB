@@ -1,3 +1,25 @@
-docs
-proto
-AGENT.md
+# Build artifacts
+build/
+build-wheel/
+cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+dist/
+wheelhouse/
+*.whl
+*.tar.gz
+
+# Runtime data
+data/
+
+# macOS
+.DS_Store
