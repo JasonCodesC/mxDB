@@ -1,91 +1,95 @@
-# Bitemporal Feature Engine
+# mxDB: Bitemporal Feature Engine
 
-A specialized feature database for machine learning systems that need:
+mxDB is a C++20 single-node bitemporal feature engine for:
 
-- point-in-time correct historical retrieval
-- event-time and system-time tracking
-- low-latency latest-value serving
-- durable database behavior with WAL, recovery, checkpoints, and compaction
+- low-latency latest feature serving
+- bitemporal as-of retrieval (`event_time` + `system_time`)
+- deterministic recovery from WAL
+- point-in-time dataset construction workflows
 
-The project is aimed at ML workloads where late data, corrections, and training leakage actually matter. Quant finance is an obvious use case, but the design also applies to fraud, recommender systems, IoT, healthcare, and other real-time or delayed-data ML domains.
+## Current Status
 
-## Status
+Implemented in this repository:
 
-Current repository state:
+- CMake-based C++ build
+- SQLite metadata plane with migrations
+- WAL write path with checksums, sync and group-commit durability
+- partitioned in-memory state and idempotent write handling (`write_id`)
+- recovery manager with checkpoint-bounded WAL replay
+- immutable segment flush and manifest tracking
+- latest and as-of query APIs in the core engine
+- PIT dataset builder (correctness-first implementation)
+- checkpointing, conservative compaction, admin service, backup/restore
+- `featurectl` CLI for ops + data-plane workflows
+- thin Python SDK over `featurectl`
+- test suite (unit + integration + recovery + SDK)
 
-- architecture spec complete
-- ADR set complete
-- API contract complete
-- protobuf contracts complete
-- implementation plan complete
-- execution docs for an implementation agent complete
-- core codebase not started yet
+Known limitations are documented in [docs/known-limitations.md](docs/known-limitations.md).
 
-This repository is currently in the transition from architecture to implementation.
+## Build and Test
 
-## Read First
+```bash
+cmake -S . -B build
+cmake --build build -j8
+ctest --test-dir build --output-on-failure
+```
 
-- Project execution rules: [AGENT.md](/Users/jasonmajoros/Documents/New project/AGENT.md)
-- Architecture index: [README.md](/Users/jasonmajoros/Documents/New project/docs/README.md)
-- Full system spec: [bitemporal-feature-engine-spec.md](/Users/jasonmajoros/Documents/New project/docs/bitemporal-feature-engine-spec.md)
-- API contracts: [bitemporal-feature-engine-api-contracts.md](/Users/jasonmajoros/Documents/New project/docs/bitemporal-feature-engine-api-contracts.md)
-- Implementation plan: [bitemporal-feature-engine-implementation-plan.md](/Users/jasonmajoros/Documents/New project/docs/bitemporal-feature-engine-implementation-plan.md)
-- Backlog: [implementation-backlog.md](/Users/jasonmajoros/Documents/New project/docs/implementation-backlog.md)
-- Definition of done: [definition-of-done.md](/Users/jasonmajoros/Documents/New project/docs/definition-of-done.md)
-- Development guide: [development-guide.md](/Users/jasonmajoros/Documents/New project/docs/development-guide.md)
+## Quickstart
 
-## Core Idea
+1. Copy config:
 
-The engine stores feature values along two timelines:
+```bash
+cp deploy/config/featured.conf.example featured.conf
+```
 
-- `event_time`: when the fact was true
-- `system_time`: when the system learned or accepted that fact
+2. Register a feature:
 
-That lets the engine answer both:
+```bash
+build/featurectl featured.conf register-feature prod instrument f_price price double
+```
 
-- "What was the feature value as of time T?"
-- "What did the system know as of time T?"
+3. Ingest a value:
 
-This is the foundation for:
+```bash
+build/featurectl featured.conf ingest prod instrument AAPL f_price 100 100 101.5 w1
+```
 
-- leakage-safe training data
-- auditability
-- correction handling
-- reproducible model inputs
+4. Query latest / as-of:
 
-## Planned V1
+```bash
+build/featurectl featured.conf latest prod instrument AAPL f_price
+build/featurectl featured.conf asof prod instrument AAPL f_price 100 100
+```
 
-The first real release is a single-node service with:
+## Python SDK
 
-- metadata registry
-- WAL-backed ingestion
-- memtables and immutable segments
-- crash recovery
-- latest-value serving
-- as-of lookups
-- point-in-time joins
-- checkpoints and compaction
-- admin and observability surfaces
-- Python SDK
+Install from PyPI (wheel with bundled `featurectl`):
 
-Distributed clustering is intentionally later.
+```bash
+pip install mxdb
+```
 
-## Repository Layout
+Use local source checkout mode:
 
-The intended repository structure is documented in the main spec, but the high-level layout is:
+```bash
+PYTHONPATH=sdk/python/src python3 -c "from mxdb import MXDBClient; print(MXDBClient)"
+```
 
-- `docs/`: architecture, decisions, contracts, backlog, execution guidance
-- `proto/`: machine-readable API contracts
-- `tools/`: support scripts such as spec rendering
+`MXDBClient` auto-resolves `featurectl` from bundled wheel binaries first.
 
-As implementation starts, the repository should grow into the full structure described in the spec.
+Example benchmark runner:
 
-## Current Next Step
+```bash
+PYTHONPATH=sdk/python/src python3 tools/benchmark_runner.py \
+  --config featured.conf \
+  --featurectl-bin build/featurectl
+```
 
-The highest-value implementation starting point is:
+## Documentation Map
 
-1. create the build skeleton and source tree
-2. implement the metadata plane and validation library
-3. implement the WAL format and crash-recovery harness
-
-Those steps are detailed in [implementation-backlog.md](/Users/jasonmajoros/Documents/New project/docs/implementation-backlog.md).
+- Architecture index: [docs/README.md](docs/README.md)
+- Execution charter: [AGENT.md](AGENT.md)
+- Implementation plan: [docs/bitemporal-feature-engine-implementation-plan.md](docs/bitemporal-feature-engine-implementation-plan.md)
+- Backlog: [docs/implementation-backlog.md](docs/implementation-backlog.md)
+- Definition of done: [docs/definition-of-done.md](docs/definition-of-done.md)
+- Operational runbook: [docs/operational-runbook.md](docs/operational-runbook.md)
