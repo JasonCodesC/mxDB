@@ -23,3 +23,5 @@ data/
 
 # macOS
 .DS_Store
+
+AGENT.md
