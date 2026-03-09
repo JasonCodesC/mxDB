@@ -109,6 +109,7 @@ build/featurectl featured.conf register-feature prod instrument f_flag flag bool
 ```bash
 build/featurectl featured.conf ingest prod instrument AAPL f_price 100 100 101.5 w1
 build/featurectl featured.conf ingest prod instrument AAPL f_flag 101 101 true w2
+build/featurectl featured.conf ingest prod instrument AAPL f_price 102 102 0.0 w3 delete
 ```
 
 4. Read latest and as-of values:
@@ -116,11 +117,13 @@ build/featurectl featured.conf ingest prod instrument AAPL f_flag 101 101 true w
 ```bash
 build/featurectl featured.conf latest prod instrument AAPL f_price
 build/featurectl featured.conf latest prod instrument AAPL f_price 5
+build/featurectl featured.conf get prod instrument AAPL
 build/featurectl featured.conf asof prod instrument AAPL f_price 100 100
 ```
 
 Supported CLI value types for `register-feature`:
 `double`, `int64`, `string`, `bool`, `float_vector`, `double_vector`.
+`ingest` operation supports `upsert` (default) and `delete`.
 
 5. Check health:
 
@@ -138,44 +141,44 @@ client = MXDBClient("featured.conf")
 client.register_feature("prod", "instrument", "f_price", "price", "double")
 client.register_feature("prod", "instrument", "f_flag", "flag", "bool")
 
-client.ingest(
-    tenant="prod",
-    entity_type="instrument",
-    entity_id="AAPL",
-    feature_id="f_price",
-    event_time_us=100,
-    system_time_us=100,
-    value=101.5,
-    write_id="w1",
-)
-client.ingest(
-    tenant="prod",
-    entity_type="instrument",
-    entity_id="AAPL",
-    feature_id="f_flag",
-    event_time_us=101,
-    system_time_us=101,
-    value=True,
-    write_id="w2",
-)
+aapl = client.entity("prod", "instrument", "AAPL")
 
-latest = client.latest("prod", "instrument", "AAPL", "f_price")
-latest_history = client.latest("prod", "instrument", "AAPL", "f_price", count=5)
-asof = client.asof("prod", "instrument", "AAPL", "f_price", 100, 100)
+aapl.ingest("f_price", 100, 101.5, "w1", system_time_us=100)
+aapl.ingest("f_flag", 101, True, "w2", system_time_us=101)
+
+latest = aapl.latest("f_price")
+latest_history = aapl.latest("f_price", count=5)
+snapshot = aapl.get()
+asof = aapl.asof("f_price", 100, 100)
+# system cutoff can be omitted (defaults to now)
+asof_now = aapl.asof("f_price", "2026:03:09:12:00:00")
+# range form: latest visible value inside [start, end]
+asof_range = aapl.asof("f_price", ("2026:03:09:12:00:00.000", "2026:03:09:12:10:00.000"))
 
 print(latest)
 print(latest_history)
+print(snapshot)
 print(asof)
+print(asof_now)
+print(asof_range)
 ```
 
-`latest(..., count=N)` returns up to `N` recent values (or fewer if less history is loaded in memory).
+The Python SDK public read/write API is entity-scoped via `client.entity(...)`.
+
+`entity.latest(..., count=N)` returns up to `N` recent values (or fewer if less history is loaded in memory).
 Typed Python reads support: `bool`, `int64`, `double`, `string`, `float_vector`, `double_vector`.
 
 Return shapes:
 
-- `latest(..., count=1)` -> `TypedFeatureResult`
-- `latest(..., count>1)` -> `list[TypedFeatureResult]`
-- `asof(...)` -> `TypedFeatureResult`
+- `entity.latest(..., count=1)` -> `TypedFeatureResult`
+- `entity.latest(..., count>1)` -> `list[TypedFeatureResult]`
+- `entity.get()` -> `dict[str, TypedFeatureResult]`
+- `entity.asof(...)` -> `TypedFeatureResult`
+
+`MXDBEntityClient.asof(...)` accepts epoch micros (`int`) or friendly timestamp strings
+(`YYYY:MM:DD:HH:MM:SS[.ffffff]` or ISO-8601). It also accepts `(start, end)` ranges and
+returns the latest visible value in that closed interval. `system_cutoff` is optional and
+defaults to `now`.
 
 ### Binary Resolution Rules in Python SDK
 
@@ -199,6 +202,8 @@ build/featurectl featured.conf compact
 build/featurectl featured.conf backup /tmp/mxdb-backup
 build/featurectl featured.conf readonly on
 ```
+
+When read-only mode is enabled, memtables are flushed, writes are rejected, and compaction is blocked.
 
 ## Configuration
 
