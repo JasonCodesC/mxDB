@@ -1,13 +1,10 @@
 #include "engine/wal/wal_writer.h"
 
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
 #include <cstring>
 #include <filesystem>
 #include <sstream>
 
+#include "engine/common/io/file_ops.h"
 #include "engine/common/crc32/crc32.h"
 
 namespace mxdb {
@@ -67,8 +64,9 @@ Status WalWriter::Close() {
     return status;
   }
 
-  if (::close(fd_) != 0) {
-    return Status::Internal("close WAL fd failed");
+  status = io::CloseFile(fd_, "close WAL fd failed");
+  if (!status.ok()) {
+    return status;
   }
   fd_ = -1;
   return Status::Ok();
@@ -138,16 +136,17 @@ Status WalWriter::EnsureSegmentOpen() {
   }
 
   const std::string path = SegmentPath(segment_index_);
-  fd_ = ::open(path.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
+  fd_ = io::OpenWriteAppend(path);
   if (fd_ < 0) {
     return Status::Internal("failed to open WAL segment: " + path);
   }
 
-  struct stat st = {};
-  if (::fstat(fd_, &st) == 0) {
-    current_segment_bytes_ = static_cast<size_t>(st.st_size);
-  } else {
+  std::error_code ec;
+  const auto segment_size = std::filesystem::file_size(path, ec);
+  if (ec) {
     current_segment_bytes_ = 0;
+  } else {
+    current_segment_bytes_ = static_cast<size_t>(segment_size);
   }
 
   return Status::Ok();
@@ -159,8 +158,11 @@ Status WalWriter::RotateSegment() {
     return status;
   }
 
-  if (fd_ >= 0 && ::close(fd_) != 0) {
-    return Status::Internal("failed to close WAL segment during rotation");
+  if (fd_ >= 0) {
+    status = io::CloseFile(fd_, "failed to close WAL segment during rotation");
+    if (!status.ok()) {
+      return status;
+    }
   }
 
   fd_ = -1;
@@ -174,8 +176,9 @@ Status WalWriter::FsyncCurrentSegment() {
   if (fd_ < 0) {
     return Status::Ok();
   }
-  if (::fsync(fd_) != 0) {
-    return Status::Internal("fsync failed");
+  Status status = io::SyncFile(fd_, "fsync failed");
+  if (!status.ok()) {
+    return status;
   }
   pending_since_fsync_ = 0;
   last_fsync_at_ = std::chrono::steady_clock::now();
@@ -183,17 +186,7 @@ Status WalWriter::FsyncCurrentSegment() {
 }
 
 Status WalWriter::WriteAll(const void* data, size_t bytes) {
-  const uint8_t* cursor = static_cast<const uint8_t*>(data);
-  size_t remaining = bytes;
-  while (remaining > 0) {
-    const ssize_t written = ::write(fd_, cursor, remaining);
-    if (written <= 0) {
-      return Status::Internal("write to WAL failed");
-    }
-    remaining -= static_cast<size_t>(written);
-    cursor += written;
-  }
-  return Status::Ok();
+  return io::WriteAll(fd_, data, bytes, "write to WAL failed");
 }
 
 std::string WalWriter::SegmentPath(uint32_t index) const {

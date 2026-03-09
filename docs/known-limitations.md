@@ -1,6 +1,7 @@
 # Known Limitations
 
 - Public transport APIs are currently CLI-based (`featurectl`), not gRPC server endpoints yet.
+- `featured` runs as a local process but does not expose a network API surface yet.
 - Arrow-native historical export and protobuf/gRPC service bindings are not implemented yet.
 - PIT join execution currently uses repeated as-of lookups and is correctness-first, not optimized.
 - Retention policy evaluation is conservative and does not yet support policy-specific pruning.

@@ -15,6 +15,12 @@ cp deploy/config/featured.conf.example featured.conf
 build/featured featured.conf
 ```
 
+`featured` is a long-running process.
+
+For now, do not run `featurectl` commands against the same `data_dir` while a
+`featured` process is running. The v1 transport surface is CLI-based and there
+is no network API/multiprocess coordination layer yet.
+
 ## Health
 
 ```bash
@@ -25,10 +31,16 @@ build/featurectl featured.conf health
 
 ```bash
 build/featurectl featured.conf register-feature prod instrument f_price price double
+build/featurectl featured.conf register-feature prod instrument f_flag flag bool
 build/featurectl featured.conf ingest prod instrument AAPL f_price 100 100 101.5 w1
+build/featurectl featured.conf ingest prod instrument AAPL f_flag 101 101 true w2
 build/featurectl featured.conf latest prod instrument AAPL f_price
+build/featurectl featured.conf latest prod instrument AAPL f_price 5
 build/featurectl featured.conf asof prod instrument AAPL f_price 100 100
 ```
+
+Supported CLI value types:
+`double`, `int64`, `string`, `bool`, `float_vector`, `double_vector`.
 
 ## Checkpoint and Compaction
 

@@ -11,6 +11,8 @@ The wheel build pipeline targets macOS, Linux, and Windows.
 pip install mxdb
 ```
 
+No local compiler/toolchain is required for standard wheel installs.
+
 ## Basic Usage
 
 ```python
@@ -70,13 +72,26 @@ Read APIs:
 
 Legacy `*_double` methods remain available for double-only code paths.
 
+## Return Objects
+
+`latest()` and `asof()` return `TypedFeatureResult` objects with:
+
+- `found: bool`
+- `value_type: str | None`
+- `value: Any | None`
+- `event_time_us: int | None`
+- `system_time_us: int | None`
+- `lsn: int | None` (`latest()` paths include `lsn`; `asof()` is `None`)
+
+When `count > 1`, `latest()` returns `list[TypedFeatureResult]` in newest-first order.
+
 ## Binary Resolution Order
 
 `MXDBClient` resolves `featurectl` in this order:
 
 1. explicit `featurectl_bin=` argument
 2. `MXDB_FEATURECTL_BIN` environment variable
-3. bundled wheel binary (`mxdb/bin/featurectl`)
+3. bundled wheel binary payload (`mxdb/bin/featurectl(.exe).gz`, extracted at runtime)
 4. `featurectl` on `PATH`
 
 If none are found, construction fails with a clear error.
@@ -87,4 +102,13 @@ If none are found, construction fails with a clear error.
 python sdk/python/scripts/build_featurectl_for_wheel.py
 cd sdk/python
 python -m build
+```
+
+For source builds on Windows, install SQLite via vcpkg and pass the toolchain:
+
+```powershell
+python sdk/python/scripts/install_windows_sqlite.py
+$env:MXDB_CMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+$env:MXDB_VCPKG_TARGET_TRIPLET="x64-windows"
+python sdk/python/scripts/build_featurectl_for_wheel.py
 ```

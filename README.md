@@ -101,12 +101,14 @@ cp deploy/config/featured.conf.example featured.conf
 
 ```bash
 build/featurectl featured.conf register-feature prod instrument f_price price double
+build/featurectl featured.conf register-feature prod instrument f_flag flag bool
 ```
 
 3. Ingest a value:
 
 ```bash
 build/featurectl featured.conf ingest prod instrument AAPL f_price 100 100 101.5 w1
+build/featurectl featured.conf ingest prod instrument AAPL f_flag 101 101 true w2
 ```
 
 4. Read latest and as-of values:
@@ -116,6 +118,9 @@ build/featurectl featured.conf latest prod instrument AAPL f_price
 build/featurectl featured.conf latest prod instrument AAPL f_price 5
 build/featurectl featured.conf asof prod instrument AAPL f_price 100 100
 ```
+
+Supported CLI value types for `register-feature`:
+`double`, `int64`, `string`, `bool`, `float_vector`, `double_vector`.
 
 5. Check health:
 
@@ -165,6 +170,12 @@ print(asof)
 
 `latest(..., count=N)` returns up to `N` recent values (or fewer if less history is loaded in memory).
 Typed Python reads support: `bool`, `int64`, `double`, `string`, `float_vector`, `double_vector`.
+
+Return shapes:
+
+- `latest(..., count=1)` -> `TypedFeatureResult`
+- `latest(..., count>1)` -> `list[TypedFeatureResult]`
+- `asof(...)` -> `TypedFeatureResult`
 
 ### Binary Resolution Rules in Python SDK
 

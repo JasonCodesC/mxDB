@@ -1,53 +1,17 @@
 #include "engine/checkpoint/checkpoint_manager.h"
 
-#include <fcntl.h>
-#include <unistd.h>
-
-#include <cerrno>
 #include <chrono>
-#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
 
+#include "engine/common/io/file_ops.h"
+
 namespace mxdb {
 
 namespace {
-
-Status WriteAll(int fd, const void* data, size_t bytes) {
-  const auto* cursor = static_cast<const uint8_t*>(data);
-  size_t remaining = bytes;
-  while (remaining > 0) {
-    const ssize_t written = ::write(fd, cursor, remaining);
-    if (written <= 0) {
-      return Status::Internal("checkpoint write failed: " +
-                              std::string(std::strerror(errno)));
-    }
-    remaining -= static_cast<size_t>(written);
-    cursor += written;
-  }
-  return Status::Ok();
-}
-
-Status FsyncDirectory(const std::filesystem::path& dir) {
-  const std::string dir_str = dir.empty() ? "." : dir.string();
-  const int dir_fd = ::open(dir_str.c_str(), O_RDONLY);
-  if (dir_fd < 0) {
-    return Status::Internal("failed to open checkpoint directory for fsync: " +
-                            std::string(std::strerror(errno)));
-  }
-
-  const int rc = ::fsync(dir_fd);
-  const int saved_errno = errno;
-  ::close(dir_fd);
-  if (rc != 0) {
-    return Status::Internal("failed to fsync checkpoint directory: " +
-                            std::string(std::strerror(saved_errno)));
-  }
-  return Status::Ok();
-}
 
 Status WriteFileAtomically(const std::string& path, const std::string& contents) {
   const std::filesystem::path target(path);
@@ -64,22 +28,21 @@ Status WriteFileAtomically(const std::string& path, const std::string& contents)
   const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
   const std::filesystem::path tmp_path =
       target.string() + ".tmp." + std::to_string(nonce);
-  const int fd = ::open(tmp_path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+  const int fd = io::OpenWriteTruncate(tmp_path.string());
   if (fd < 0) {
     return Status::Internal("failed to open temporary checkpoint file: " +
-                            std::string(std::strerror(errno)));
+                            io::ErrnoMessage());
   }
 
-  Status status = WriteAll(fd, contents.data(), contents.size());
-  if (status.ok() && ::fsync(fd) != 0) {
-    status = Status::Internal("failed to fsync checkpoint file: " +
-                              std::string(std::strerror(errno)));
+  Status status = io::WriteAll(fd, contents.data(), contents.size(),
+                               "checkpoint write failed");
+  if (status.ok()) {
+    status = io::SyncFile(fd, "failed to fsync checkpoint file");
   }
-
-  const int close_rc = ::close(fd);
-  if (status.ok() && close_rc != 0) {
-    status = Status::Internal("failed to close temporary checkpoint file: " +
-                              std::string(std::strerror(errno)));
+  Status close_status =
+      io::CloseFile(fd, "failed to close temporary checkpoint file");
+  if (status.ok()) {
+    status = close_status;
   }
 
   if (!status.ok()) {
@@ -88,14 +51,13 @@ Status WriteFileAtomically(const std::string& path, const std::string& contents)
     return status;
   }
 
-  std::filesystem::rename(tmp_path, target, ec);
-  if (ec) {
+  status = io::AtomicReplace(tmp_path, target, "checkpoint metadata replace");
+  if (!status.ok()) {
     std::filesystem::remove(tmp_path, ec);
-    return Status::Internal("failed to atomically replace checkpoint file: " +
-                            ec.message());
+    return status;
   }
 
-  return FsyncDirectory(parent);
+  return io::SyncDirectory(parent, "checkpoint directory sync");
 }
 
 }  // namespace

@@ -12,7 +12,7 @@ This project ships `mxdb` Python wheels with a bundled native `featurectl` binar
 
 1. explicit `featurectl_bin` argument
 2. `MXDB_FEATURECTL_BIN` environment variable
-3. bundled wheel binary (`mxdb/bin/featurectl`)
+3. bundled wheel binary payload (`mxdb/bin/featurectl(.exe).gz`, extracted at runtime)
 4. `featurectl` on `PATH`
 
 ## Local Wheel Build
@@ -20,7 +20,18 @@ This project ships `mxdb` Python wheels with a bundled native `featurectl` binar
 ```bash
 python sdk/python/scripts/build_featurectl_for_wheel.py
 cd sdk/python
-python setup.py bdist_wheel
+python -m build --wheel
+```
+
+Windows source-build prerequisites (for local wheel builds):
+
+```powershell
+python sdk/python/scripts/install_windows_sqlite.py
+$env:MXDB_CMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+$env:MXDB_VCPKG_TARGET_TRIPLET="x64-windows"
+python sdk/python/scripts/build_featurectl_for_wheel.py
+cd sdk/python
+python -m build --wheel
 ```
 
 ## CI Wheel Build
@@ -45,3 +56,6 @@ python -m pip install twine
 python -m twine upload wheelhouse/*.whl
 python -m twine upload sdk/python/dist/*.tar.gz
 ```
+
+For trusted publishing in CI, prefer tag-driven release (`v*`) and let
+`.github/workflows/python-wheels.yml` publish from downloaded artifacts.

@@ -1,13 +1,11 @@
 #include "engine/segment/segment_store.h"
 
-#include <fcntl.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 
+#include "engine/common/io/file_ops.h"
 #include "engine/common/crc32/crc32.h"
 #include "engine/wal/wal_record.h"
 
@@ -36,20 +34,6 @@ bool IsNewer(const FeatureEvent& lhs, const FeatureEvent& rhs) {
     return lhs.system_time_us > rhs.system_time_us;
   }
   return lhs.sequence_no > rhs.sequence_no;
-}
-
-Status WriteAll(int fd, const void* data, size_t bytes) {
-  const auto* cursor = static_cast<const uint8_t*>(data);
-  size_t remaining = bytes;
-  while (remaining > 0) {
-    const ssize_t written = ::write(fd, cursor, remaining);
-    if (written <= 0) {
-      return Status::Internal("segment write failed");
-    }
-    remaining -= static_cast<size_t>(written);
-    cursor += written;
-  }
-  return Status::Ok();
 }
 
 }  // namespace
@@ -94,22 +78,24 @@ StatusOr<SegmentData> SegmentStore::WriteSegment(
                             ec.message());
   }
 
-  const int fd = ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+  const int fd = io::OpenWriteTruncate(path);
   if (fd < 0) {
     return Status::Internal("failed to open segment file for write");
   }
 
-  Status status = WriteAll(fd, &header, sizeof(header));
+  Status status = io::WriteAll(fd, &header, sizeof(header), "segment write failed");
   if (status.ok()) {
-    status = WriteAll(fd, payload_bytes.data(), payload_bytes.size());
+    status = io::WriteAll(fd, payload_bytes.data(), payload_bytes.size(),
+                          "segment write failed");
   }
   if (status.ok()) {
-    if (::fsync(fd) != 0) {
-      status = Status::Internal("failed to fsync segment file");
-    }
+    status = io::SyncFile(fd, "failed to fsync segment file");
   }
 
-  ::close(fd);
+  Status close_status = io::CloseFile(fd, "failed to close segment file");
+  if (status.ok()) {
+    status = close_status;
+  }
   if (!status.ok()) {
     return status;
   }
