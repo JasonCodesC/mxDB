@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <string>
 
 #include "engine/recovery/recovery_manager.h"
 
@@ -40,6 +41,11 @@ bool IsSameOrDescendantPath(const std::filesystem::path& path,
     }
   }
   return true;
+}
+
+bool IsTransientProcessLockArtifact(const std::filesystem::path& path) {
+  const std::string name = path.filename().string();
+  return name == ".featurectl.process.lock" || name == ".mxdb.process.lock";
 }
 
 }  // namespace
@@ -365,13 +371,70 @@ Status AdminService::CopyPath(const std::string& from, const std::string& to,
       return Status::Internal("failed to create destination path: " + ec.message());
     }
 
-    std::filesystem::copy(from, to,
-                          std::filesystem::copy_options::recursive |
-                              std::filesystem::copy_options::overwrite_existing,
-                          ec);
+    const std::filesystem::path source_root(from);
+    const std::filesystem::path target_root(to);
+
+    std::filesystem::recursive_directory_iterator it(source_root, ec);
     if (ec) {
-      return Status::Internal("recursive copy failed: " + ec.message());
+      return Status::Internal("failed to iterate source path: " + ec.message());
     }
+    std::filesystem::recursive_directory_iterator end;
+    while (it != end) {
+      const std::filesystem::directory_entry entry = *it;
+      const std::filesystem::path source_path = entry.path();
+      if (IsTransientProcessLockArtifact(source_path)) {
+        if (entry.is_directory(ec)) {
+          it.disable_recursion_pending();
+        }
+        it.increment(ec);
+        if (ec) {
+          return Status::Internal("failed while skipping lock artifact: " +
+                                  ec.message());
+        }
+        continue;
+      }
+
+      std::filesystem::path relative = std::filesystem::relative(source_path, source_root, ec);
+      if (ec) {
+        return Status::Internal("failed to compute relative backup path: " +
+                                ec.message());
+      }
+      const std::filesystem::path destination_path = target_root / relative;
+
+      if (entry.is_directory(ec)) {
+        if (ec) {
+          return Status::Internal("failed to inspect directory while copying: " +
+                                  ec.message());
+        }
+        std::filesystem::create_directories(destination_path, ec);
+        if (ec) {
+          return Status::Internal("failed to create backup directory: " +
+                                  ec.message());
+        }
+      } else if (entry.is_regular_file(ec)) {
+        if (ec) {
+          return Status::Internal("failed to inspect file while copying: " +
+                                  ec.message());
+        }
+        std::filesystem::create_directories(destination_path.parent_path(), ec);
+        if (ec) {
+          return Status::Internal("failed to create backup file parent: " +
+                                  ec.message());
+        }
+        std::filesystem::copy_file(source_path, destination_path,
+                                   std::filesystem::copy_options::overwrite_existing,
+                                   ec);
+        if (ec) {
+          return Status::Internal("failed to copy backup file: " + ec.message());
+        }
+      }
+
+      it.increment(ec);
+      if (ec) {
+        return Status::Internal("failed while copying backup tree: " + ec.message());
+      }
+    }
+
     return Status::Ok();
   }
 

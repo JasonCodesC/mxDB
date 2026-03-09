@@ -25,6 +25,7 @@ add_library(mxdb_common
   engine/common/logging/logging.cc
   engine/common/config/config.cc
   engine/common/crc32/crc32.cc
+  engine/common/process_lock/data_dir_lock.cc
 )
 target_include_directories(mxdb_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mxdb_common PUBLIC Threads::Threads)
@@ -106,6 +107,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_wal PRIVATE mxdb_wal)
   add_test(NAME test_wal COMMAND test_wal)
 
+  add_executable(test_config tests/unit/test_config.cc)
+  target_link_libraries(test_config PRIVATE mxdb_common)
+  add_test(NAME test_config COMMAND test_config)
+
   add_executable(test_temporal_semantics tests/unit/test_temporal_semantics.cc)
   target_link_libraries(test_temporal_semantics PRIVATE mxdb_storage)
   add_test(NAME test_temporal_semantics COMMAND test_temporal_semantics)
@@ -169,7 +174,7 @@ if(BUILD_TESTING)
     set_tests_properties(
       test_python_sdk
       PROPERTIES
-        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/sdk/python/src;FEATURECTL_BIN=${CMAKE_CURRENT_BINARY_DIR}/featurectl"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/sdk/python/src;FEATURECTL_BIN=${CMAKE_CURRENT_BINARY_DIR}/featurectl;FEATURED_BIN=${CMAKE_CURRENT_BINARY_DIR}/featured"
     )
   else()
     message(STATUS "Python3 interpreter not found; skipping test_python_sdk")

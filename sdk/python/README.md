@@ -30,8 +30,8 @@ idempotent retries.
 Equivalent `featurectl` commands used under the hood:
 
 - `register <namespace> <feature_name> <value_type>`
-- `upsert <namespace> <entity_name> <feature_id> <event_us> <value>`
-- `delete <namespace> <entity_name> <feature_id> <event_us>`
+- `upsert <namespace> <entity_name> <feature_id> <event_us> <value> [write_id]`
+- `delete <namespace> <entity_name> <feature_id> <event_us> [write_id]`
 - `get <namespace> <entity_name>`
 - `latest <namespace> <entity_name> <feature_id> [count]`
 - `range <namespace> <entity_name> <feature_id> <furthest> [latest] [disk|memory]`

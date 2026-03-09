@@ -17,72 +17,13 @@
 #include "engine/admin/admin_service.h"
 #include "engine/catalog/metadata_store.h"
 #include "engine/common/config/config.h"
+#include "engine/common/process_lock/data_dir_lock.h"
 #include "engine/recovery/recovery_manager.h"
 #include "engine/storage/feature_engine.h"
 
 namespace {
 
 constexpr const char* kDefaultEntityType = "entity";
-
-class DataDirProcessLock {
- public:
-  DataDirProcessLock() = default;
-  ~DataDirProcessLock() { Release(); }
-
-  DataDirProcessLock(const DataDirProcessLock&) = delete;
-  DataDirProcessLock& operator=(const DataDirProcessLock&) = delete;
-  DataDirProcessLock(DataDirProcessLock&& other) noexcept
-      : lock_path_(std::move(other.lock_path_)), held_(other.held_) {
-    other.held_ = false;
-  }
-  DataDirProcessLock& operator=(DataDirProcessLock&& other) noexcept {
-    if (this != &other) {
-      Release();
-      lock_path_ = std::move(other.lock_path_);
-      held_ = other.held_;
-      other.held_ = false;
-    }
-    return *this;
-  }
-
-  static mxdb::StatusOr<DataDirProcessLock> Acquire(
-      const std::string& data_dir) {
-    DataDirProcessLock lock;
-    std::error_code ec;
-    const std::filesystem::path root(data_dir);
-    std::filesystem::create_directories(root, ec);
-    if (ec) {
-      return mxdb::Status::Internal("failed to create data_dir for process lock: " +
-                                    ec.message());
-    }
-
-    lock.lock_path_ = root / ".featurectl.process.lock";
-    const bool created = std::filesystem::create_directory(lock.lock_path_, ec);
-    if (ec) {
-      return mxdb::Status::Internal("failed to create process lock: " +
-                                    ec.message());
-    }
-    if (!created) {
-      return mxdb::Status::FailedPrecondition(
-          "another featurectl command is already using this data_dir");
-    }
-    lock.held_ = true;
-    return lock;
-  }
-
- private:
-  void Release() {
-    if (!held_) {
-      return;
-    }
-    std::error_code ec;
-    std::filesystem::remove_all(lock_path_, ec);
-    held_ = false;
-  }
-
-  std::filesystem::path lock_path_;
-  bool held_ = false;
-};
 
 mxdb::TimestampMicros NowMicros() {
   const auto now = std::chrono::system_clock::now();
@@ -450,6 +391,14 @@ mxdb::StatusOr<std::string> LatestSnapshotAsJson(
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc == 2) {
+    const std::string maybe_help = argv[1];
+    if (maybe_help == "help" || maybe_help == "--help" || maybe_help == "-h") {
+      PrintUsage();
+      return 0;
+    }
+  }
+
   if (argc < 3) {
     PrintUsage();
     return 1;
@@ -462,8 +411,13 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  mxdb::EngineConfig config = mxdb::ConfigLoader::LoadFromFile(config_path);
-  auto process_lock = DataDirProcessLock::Acquire(config.data_dir);
+  auto config_or = mxdb::ConfigLoader::LoadFromFile(config_path);
+  if (!config_or.ok()) {
+    std::cerr << "config load failed: " << config_or.status().message() << "\n";
+    return 1;
+  }
+  mxdb::EngineConfig config = config_or.value();
+  auto process_lock = mxdb::DataDirProcessLock::Acquire(config.data_dir, "featurectl");
   if (!process_lock.ok()) {
     std::cerr << "process lock failed: " << process_lock.status().message() << "\n";
     return 1;

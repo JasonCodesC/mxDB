@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "engine/common/status/status.h"
 #include "engine/types/types.h"
 
 namespace mxdb {
@@ -24,7 +25,7 @@ struct EngineConfig {
 class ConfigLoader {
  public:
   // Minimal key=value parser for local runs.
-  static EngineConfig LoadFromFile(const std::string& path);
+  static StatusOr<EngineConfig> LoadFromFile(const std::string& path);
 };
 
 }  // namespace mxdb

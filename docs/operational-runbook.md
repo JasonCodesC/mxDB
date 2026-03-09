@@ -8,6 +8,11 @@ cmake --build build -j8
 ctest --test-dir build --output-on-failure
 ```
 
+Config notes:
+- missing config file causes startup failure
+- malformed numeric values are rejected during config load
+- relative paths in config resolve against the config file directory
+
 ## Start Engine
 
 ```bash
@@ -17,12 +22,9 @@ build/featured featured.conf
 
 `featured` is a long-running process.
 
-Do not run `featurectl` commands against the same `data_dir` while a
-`featured` process is running. The v1 transport surface is CLI-based, and there
-is still no shared network API/multiprocess coordination layer with `featured`.
-
-`featurectl` itself now enforces a per-`data_dir` process lock, so overlapping
-CLI/SDK commands are explicitly rejected instead of racing on-disk state.
+`featured` and `featurectl` now share a per-`data_dir` process lock. Any second
+process against the same `data_dir` is rejected with a clear coordination
+failure instead of racing on-disk state.
 
 ## Health
 

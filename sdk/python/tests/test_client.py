@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -36,8 +37,67 @@ class MXDBClientTest(unittest.TestCase):
 
         repo_root = Path(__file__).resolve().parents[3]
         default_bin = repo_root / "build" / "featurectl"
+        default_featured_bin = repo_root / "build" / "featured"
         self.featurectl_bin = os.environ.get("FEATURECTL_BIN", str(default_bin))
+        self.featured_bin = os.environ.get("FEATURED_BIN", str(default_featured_bin))
         self.client = MXDBClient(str(self.config_path), self.featurectl_bin)
+
+    def _data_dir_path(self) -> Path:
+        return self.tmp_path / "data"
+
+    def _process_lock_path(self) -> Path:
+        data_dir = self._data_dir_path()
+        return data_dir.parent / f"{data_dir.name}.mxdb.process.lock"
+
+    def _run_featurectl(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [self.featurectl_bin, str(self.config_path), *args],
+            capture_output=True,
+            text=True,
+        )
+
+    def _start_featured(self) -> subprocess.Popen[str]:
+        proc = subprocess.Popen(
+            [self.featured_bin, str(self.config_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        deadline = time.time() + 5.0
+        lock_path = self._process_lock_path()
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                stderr = proc.stderr.read() if proc.stderr is not None else ""
+                if proc.stdout is not None:
+                    proc.stdout.close()
+                if proc.stderr is not None:
+                    proc.stderr.close()
+                raise AssertionError(f"featured exited early: {stderr.strip()}")
+            if lock_path.exists():
+                return proc
+            time.sleep(0.02)
+
+        proc.terminate()
+        proc.wait(timeout=5)
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
+        raise AssertionError("featured did not acquire process lock in time")
+
+    def _stop_featured(self, proc: subprocess.Popen[str]) -> None:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -309,6 +369,241 @@ class MXDBClientTest(unittest.TestCase):
             saw_lock_conflict,
             "expected at least one overlapping featurectl command to be rejected",
         )
+
+    def test_featured_blocks_featurectl_health_same_data_dir(self) -> None:
+        if not Path(self.featured_bin).exists():
+            self.skipTest("featured binary not available")
+
+        featured = self._start_featured()
+        try:
+            proc = self._run_featurectl("health")
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("process lock failed", proc.stderr)
+        finally:
+            self._stop_featured(featured)
+
+    def test_featured_blocks_featurectl_upsert_same_data_dir(self) -> None:
+        if not Path(self.featured_bin).exists():
+            self.skipTest("featured binary not available")
+
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+
+        featured = self._start_featured()
+        try:
+            proc = self._run_featurectl(
+                "upsert",
+                "prod",
+                "AAPL",
+                "f_price",
+                str(now),
+                "101.5",
+                "cli-upsert-lock-test",
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("process lock failed", proc.stderr)
+        finally:
+            self._stop_featured(featured)
+
+        snapshot = aapl.get()
+        self.assertIn("f_price", snapshot)
+        self.assertFalse(snapshot["f_price"].found)
+
+    def test_featured_blocks_python_latest_same_data_dir(self) -> None:
+        if not Path(self.featured_bin).exists():
+            self.skipTest("featured binary not available")
+
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+        aapl.upsert("f_price", now, 101.5)
+
+        featured = self._start_featured()
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                aapl.latest("f_price")
+            self.assertIn("process lock failed", str(ctx.exception))
+        finally:
+            self._stop_featured(featured)
+
+    def test_featured_blocks_python_upsert_same_data_dir(self) -> None:
+        if not Path(self.featured_bin).exists():
+            self.skipTest("featured binary not available")
+
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+
+        featured = self._start_featured()
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                aapl.upsert("f_price", now, 101.5)
+            self.assertIn("process lock failed", str(ctx.exception))
+        finally:
+            self._stop_featured(featured)
+
+    def test_second_featured_instance_rejected(self) -> None:
+        if not Path(self.featured_bin).exists():
+            self.skipTest("featured binary not available")
+
+        first = self._start_featured()
+        try:
+            second = subprocess.run(
+                [self.featured_bin, str(self.config_path)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(second.returncode, 0)
+            self.assertIn("process lock failed", second.stderr)
+        finally:
+            self._stop_featured(first)
+
+    def test_normal_featurectl_exit_cleans_process_lock(self) -> None:
+        proc_one = self._run_featurectl("health")
+        self.assertEqual(proc_one.returncode, 0)
+        proc_two = self._run_featurectl("health")
+        self.assertEqual(proc_two.returncode, 0)
+        self.assertFalse((self._data_dir_path() / ".featurectl.process.lock").exists())
+
+    def test_failed_featurectl_command_cleans_process_lock(self) -> None:
+        failed = self._run_featurectl("register", "prod", "f_price")
+        self.assertNotEqual(failed.returncode, 0)
+
+        healthy = self._run_featurectl("health")
+        self.assertEqual(healthy.returncode, 0)
+        self.assertFalse((self._data_dir_path() / ".featurectl.process.lock").exists())
+
+    def test_stale_process_lock_has_recovery_path(self) -> None:
+        lock_path = self._process_lock_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text("orphan lock file")
+
+        proc = self._run_featurectl("health")
+        self.assertEqual(proc.returncode, 0)
+
+    def test_backup_snapshot_excludes_process_lock_artifact(self) -> None:
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+        aapl.upsert("f_price", now, 101.5)
+
+        legacy_lock_dir = self._data_dir_path() / ".featurectl.process.lock"
+        legacy_lock_dir.mkdir(parents=True, exist_ok=True)
+        (legacy_lock_dir / "stale").write_text("stale")
+
+        backup_dir = self.tmp_path / "backup-lock-filter"
+        self.client.backup(str(backup_dir))
+
+        self.assertFalse((backup_dir / "data" / ".featurectl.process.lock").exists())
+
+    def test_restore_output_excludes_process_lock_artifact(self) -> None:
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+        aapl.upsert("f_price", now, 101.5)
+
+        backup_dir = self.tmp_path / "backup-restore-lock-filter"
+        self.client.backup(str(backup_dir))
+
+        legacy_lock_dir = backup_dir / "data" / ".featurectl.process.lock"
+        legacy_lock_dir.mkdir(parents=True, exist_ok=True)
+        (legacy_lock_dir / "stale").write_text("stale")
+
+        restore = self._run_featurectl("restore", str(backup_dir))
+        self.assertEqual(restore.returncode, 0, msg=restore.stderr)
+        self.assertFalse((self._data_dir_path() / ".featurectl.process.lock").exists())
+
+    def test_cli_upsert_explicit_write_id_is_retry_idempotent(self) -> None:
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+
+        first = self._run_featurectl(
+            "upsert", "prod", "AAPL", "f_price", str(now), "101.5", "cli-upsert-w1"
+        )
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+        second = self._run_featurectl(
+            "upsert", "prod", "AAPL", "f_price", str(now + 1), "999.0", "cli-upsert-w1"
+        )
+        self.assertEqual(second.returncode, 0, msg=second.stderr)
+
+        latest = aapl.latest("f_price")
+        self.assertTrue(latest.found)
+        self.assertEqual(latest.value, 101.5)
+
+    def test_cli_delete_explicit_write_id_is_retry_idempotent(self) -> None:
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+        aapl.upsert("f_price", now, 101.5)
+
+        first = self._run_featurectl(
+            "delete", "prod", "AAPL", "f_price", str(now + 1), "cli-delete-w1"
+        )
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+        second = self._run_featurectl(
+            "delete", "prod", "AAPL", "f_price", str(now + 2), "cli-delete-w1"
+        )
+        self.assertEqual(second.returncode, 0, msg=second.stderr)
+
+        latest = aapl.latest("f_price")
+        self.assertFalse(latest.found)
+        history = aapl.get_range("f_price", (now + 10, now))
+        self.assertEqual([item.value for item in history], [101.5])
+
+    def test_python_delete_explicit_write_id_is_retry_idempotent(self) -> None:
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+        aapl.upsert("f_price", now, 101.5)
+
+        aapl.delete("f_price", now + 1, write_id="py-delete-w1")
+        aapl.delete("f_price", now + 2, write_id="py-delete-w1")
+
+        latest = aapl.latest("f_price")
+        self.assertFalse(latest.found)
+        history = aapl.get_range("f_price", (now + 10, now))
+        self.assertEqual([item.value for item in history], [101.5])
+
+    def test_featurectl_help_matches_readme_usage(self) -> None:
+        help_proc = subprocess.run(
+            [self.featurectl_bin, "--help"], capture_output=True, text=True
+        )
+        self.assertEqual(help_proc.returncode, 0)
+        help_text = help_proc.stdout + help_proc.stderr
+
+        readme_text = (Path(__file__).resolve().parents[3] / "README.md").read_text()
+        upsert_usage = (
+            "upsert <namespace> <entity_name> <feature_id> <event_us> <value> [write_id]"
+        )
+        delete_usage = "delete <namespace> <entity_name> <feature_id> <event_us> [write_id]"
+        self.assertIn(upsert_usage, help_text)
+        self.assertIn(delete_usage, help_text)
+        self.assertIn(upsert_usage, readme_text)
+        self.assertIn(delete_usage, readme_text)
+
+    def test_featurectl_missing_config_fails(self) -> None:
+        missing = self.tmp_path / "missing.conf"
+        proc = subprocess.run(
+            [self.featurectl_bin, str(missing), "health"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("config load failed", proc.stderr)
+
+    def test_featured_missing_config_fails(self) -> None:
+        if not Path(self.featured_bin).exists():
+            self.skipTest("featured binary not available")
+        missing = self.tmp_path / "missing.conf"
+        proc = subprocess.run(
+            [self.featured_bin, str(missing)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("config load failed", proc.stderr)
 
     def test_resolves_binary_from_env(self) -> None:
         old = os.environ.get("MXDB_FEATURECTL_BIN")
