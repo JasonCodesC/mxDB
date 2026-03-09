@@ -1,11 +1,16 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <exception>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <variant>
+#include <vector>
 
 #include "engine/admin/admin_service.h"
 #include "engine/catalog/metadata_store.h"
@@ -34,7 +39,7 @@ void PrintUsage() {
       << "  restore <source_dir> [readonly]\n"
       << "  register-feature <tenant> <entity_type> <feature_id> <feature_name> <value_type>\n"
       << "  ingest <tenant> <entity_type> <entity_id> <feature_id> <event_us> <system_us|auto> <value> <write_id>\n"
-      << "  latest <tenant> <entity_type> <entity_id> <feature_id>\n"
+      << "  latest <tenant> <entity_type> <entity_id> <feature_id> [count]\n"
       << "  asof <tenant> <entity_type> <entity_id> <feature_id> <event_cutoff_us> <system_cutoff_us>\n";
 }
 
@@ -51,7 +56,29 @@ mxdb::StatusOr<mxdb::ValueType> ParseValueType(const std::string& value_type) {
   if (value_type == "bool") {
     return mxdb::ValueType::kBool;
   }
+  if (value_type == "float_vector") {
+    return mxdb::ValueType::kFloatVector;
+  }
+  if (value_type == "double_vector") {
+    return mxdb::ValueType::kDoubleVector;
+  }
   return mxdb::Status::InvalidArgument("unsupported value_type for CLI");
+}
+
+std::string Trim(const std::string& value) {
+  size_t begin = 0;
+  while (begin < value.size() &&
+         std::isspace(static_cast<unsigned char>(value[begin]))) {
+    ++begin;
+  }
+
+  size_t end = value.size();
+  while (end > begin &&
+         std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+    --end;
+  }
+
+  return value.substr(begin, end - begin);
 }
 
 mxdb::StatusOr<bool> ParseBool(const std::string& value) {
@@ -66,6 +93,101 @@ mxdb::StatusOr<bool> ParseBool(const std::string& value) {
     return false;
   }
   return mxdb::Status::InvalidArgument("invalid bool literal: " + value);
+}
+
+mxdb::StatusOr<std::vector<double>> ParseDoubleVectorLiteral(
+    const std::string& literal) {
+  std::string body = Trim(literal);
+  if (!body.empty() && body.front() == '[' && body.back() == ']') {
+    body = body.substr(1, body.size() - 2);
+  }
+  body = Trim(body);
+  if (body.empty()) {
+    return std::vector<double>{};
+  }
+
+  std::vector<double> out;
+  std::stringstream ss(body);
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    token = Trim(token);
+    if (token.empty()) {
+      return mxdb::Status::InvalidArgument("invalid vector literal: empty element");
+    }
+    try {
+      out.push_back(std::stod(token));
+    } catch (const std::exception&) {
+      return mxdb::Status::InvalidArgument("invalid vector literal element: " +
+                                           token);
+    }
+  }
+  return out;
+}
+
+std::string JsonEscape(const std::string& raw) {
+  std::string out;
+  out.reserve(raw.size() + 8);
+  for (char c : raw) {
+    switch (c) {
+      case '\\':
+        out += "\\\\";
+        break;
+      case '"':
+        out += "\\\"";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        out += c;
+        break;
+    }
+  }
+  return out;
+}
+
+std::string Base64Encode(const std::string& input) {
+  static constexpr char kTable[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+  std::string out;
+  out.reserve(((input.size() + 2) / 3) * 4);
+
+  size_t i = 0;
+  while (i + 2 < input.size()) {
+    const uint32_t n = (static_cast<uint8_t>(input[i]) << 16U) |
+                       (static_cast<uint8_t>(input[i + 1]) << 8U) |
+                       static_cast<uint8_t>(input[i + 2]);
+    out.push_back(kTable[(n >> 18U) & 63U]);
+    out.push_back(kTable[(n >> 12U) & 63U]);
+    out.push_back(kTable[(n >> 6U) & 63U]);
+    out.push_back(kTable[n & 63U]);
+    i += 3;
+  }
+
+  const size_t rem = input.size() - i;
+  if (rem == 1) {
+    const uint32_t n = static_cast<uint8_t>(input[i]) << 16U;
+    out.push_back(kTable[(n >> 18U) & 63U]);
+    out.push_back(kTable[(n >> 12U) & 63U]);
+    out.push_back('=');
+    out.push_back('=');
+  } else if (rem == 2) {
+    const uint32_t n = (static_cast<uint8_t>(input[i]) << 16U) |
+                       (static_cast<uint8_t>(input[i + 1]) << 8U);
+    out.push_back(kTable[(n >> 18U) & 63U]);
+    out.push_back(kTable[(n >> 12U) & 63U]);
+    out.push_back(kTable[(n >> 6U) & 63U]);
+    out.push_back('=');
+  }
+
+  return out;
 }
 
 mxdb::StatusOr<mxdb::FeatureValue> ParseLiteralForType(mxdb::ValueType type,
@@ -91,16 +213,36 @@ mxdb::StatusOr<mxdb::FeatureValue> ParseLiteralForType(mxdb::ValueType type,
       case mxdb::ValueType::kString:
         value.value = literal;
         return value;
+      case mxdb::ValueType::kFloatVector: {
+        auto parsed = ParseDoubleVectorLiteral(literal);
+        if (!parsed.ok()) {
+          return parsed.status();
+        }
+        std::vector<float> casted;
+        casted.reserve(parsed.value().size());
+        for (double v : parsed.value()) {
+          casted.push_back(static_cast<float>(v));
+        }
+        value.value = std::move(casted);
+        return value;
+      }
+      case mxdb::ValueType::kDoubleVector: {
+        auto parsed = ParseDoubleVectorLiteral(literal);
+        if (!parsed.ok()) {
+          return parsed.status();
+        }
+        value.value = parsed.value();
+        return value;
+      }
       default:
-        return mxdb::Status::InvalidArgument(
-            "featurectl ingest supports bool, int64, double, and string");
+        return mxdb::Status::InvalidArgument("unsupported value_type for ingest");
     }
   } catch (const std::exception&) {
     return mxdb::Status::InvalidArgument("invalid value literal for feature type");
   }
 }
 
-mxdb::StatusOr<std::string> RenderValue(const mxdb::FeatureValue& value) {
+mxdb::StatusOr<std::string> ValueAsJson(const mxdb::FeatureValue& value) {
   if (value.IsNull()) {
     return std::string("null");
   }
@@ -111,16 +253,69 @@ mxdb::StatusOr<std::string> RenderValue(const mxdb::FeatureValue& value) {
         return std::string(std::get<bool>(value.value) ? "true" : "false");
       case mxdb::ValueType::kInt64:
         return std::to_string(std::get<int64_t>(value.value));
-      case mxdb::ValueType::kDouble:
-        return std::to_string(std::get<double>(value.value));
+      case mxdb::ValueType::kDouble: {
+        std::ostringstream out;
+        out << std::setprecision(17) << std::get<double>(value.value);
+        return out.str();
+      }
       case mxdb::ValueType::kString:
-        return std::get<std::string>(value.value);
+        return std::string("\"") + JsonEscape(std::get<std::string>(value.value)) +
+               "\"";
+      case mxdb::ValueType::kFloatVector: {
+        const auto& vec = std::get<std::vector<float>>(value.value);
+        std::ostringstream out;
+        out << "[";
+        for (size_t i = 0; i < vec.size(); ++i) {
+          if (i > 0) {
+            out << ",";
+          }
+          out << std::setprecision(9) << vec[i];
+        }
+        out << "]";
+        return out.str();
+      }
+      case mxdb::ValueType::kDoubleVector: {
+        const auto& vec = std::get<std::vector<double>>(value.value);
+        std::ostringstream out;
+        out << "[";
+        for (size_t i = 0; i < vec.size(); ++i) {
+          if (i > 0) {
+            out << ",";
+          }
+          out << std::setprecision(17) << vec[i];
+        }
+        out << "]";
+        return out.str();
+      }
       default:
-        return mxdb::Status::InvalidArgument("unsupported value type for render");
+        return mxdb::Status::InvalidArgument("unsupported value type for JSON");
     }
   } catch (const std::bad_variant_access&) {
     return mxdb::Status::Internal("feature value type/variant mismatch");
   }
+}
+
+mxdb::StatusOr<std::string> LatestEventsAsJson(
+    const std::vector<mxdb::FeatureEvent>& events) {
+  std::ostringstream out;
+  out << "[";
+  for (size_t i = 0; i < events.size(); ++i) {
+    const auto& event = events[i];
+    auto value_json = ValueAsJson(event.value);
+    if (!value_json.ok()) {
+      return value_json.status();
+    }
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{\"value_type\":\"" << JsonEscape(mxdb::ToString(event.value.type))
+        << "\",\"value\":" << value_json.value()
+        << ",\"event_time_us\":" << event.event_time_us
+        << ",\"system_time_us\":" << event.system_time_us << ",\"lsn\":"
+        << event.lsn << "}";
+  }
+  out << "]";
+  return out.str();
 }
 
 }  // namespace
@@ -267,27 +462,65 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    auto latest = engine.GetLatest({.tenant_id = argv[3],
-                                    .entity_type = argv[4],
-                                    .entity_id = argv[5]},
-                                   {argv[6]});
-    if (!latest.ok()) {
-      status = latest.status();
-    } else {
-      const auto& feature = latest.value().features.at(0);
-      if (!feature.found) {
-        std::cout << "found=0\n";
+    size_t latest_count = 1;
+    if (argc >= 8) {
+      try {
+        latest_count = static_cast<size_t>(std::stoull(argv[7]));
+      } catch (const std::exception&) {
+        status = mxdb::Status::InvalidArgument("latest count must be a positive integer");
+        goto done;
+      }
+      if (latest_count == 0) {
+        status = mxdb::Status::InvalidArgument("latest count must be greater than zero");
+        goto done;
+      }
+    }
+
+    if (latest_count == 1) {
+      auto latest = engine.GetLatest({.tenant_id = argv[3],
+                                      .entity_type = argv[4],
+                                      .entity_id = argv[5]},
+                                     {argv[6]});
+      if (!latest.ok()) {
+        status = latest.status();
       } else {
-        auto rendered = RenderValue(feature.value);
-        if (!rendered.ok()) {
-          status = rendered.status();
+        const auto& feature = latest.value().features.at(0);
+        if (!feature.found) {
+          std::cout << "found=0\n";
+        } else {
+          auto json = ValueAsJson(feature.value);
+          if (!json.ok()) {
+            status = json.status();
+            goto done;
+          }
+          const std::string value_b64 = Base64Encode(json.value());
+          std::cout << "found=1"
+                    << " value_type=" << mxdb::ToString(feature.value.type)
+                    << " value_b64=" << value_b64
+                    << " event_time_us=" << feature.event_time_us
+                    << " system_time_us=" << feature.system_time_us
+                    << " lsn=" << latest.value().visible_commit.lsn << "\n";
+        }
+      }
+    } else {
+      auto latest_events = engine.GetLatestEvents({.tenant_id = argv[3],
+                                                   .entity_type = argv[4],
+                                                   .entity_id = argv[5]},
+                                                  argv[6], latest_count);
+      if (!latest_events.ok()) {
+        status = latest_events.status();
+      } else if (latest_events.value().empty()) {
+        std::cout << "found=0 count=0\n";
+      } else {
+        auto events_json = LatestEventsAsJson(latest_events.value());
+        if (!events_json.ok()) {
+          status = events_json.status();
           goto done;
         }
+        const std::string values_b64 = Base64Encode(events_json.value());
         std::cout << "found=1"
-                  << " value=" << rendered.value()
-                  << " event_time_us=" << feature.event_time_us
-                  << " system_time_us=" << feature.system_time_us
-                  << " lsn=" << latest.value().visible_commit.lsn << "\n";
+                  << " count=" << latest_events.value().size()
+                  << " values_b64=" << values_b64 << "\n";
       }
     }
   } else if (command == "asof") {
@@ -309,13 +542,15 @@ int main(int argc, char** argv) {
       if (!feature.found) {
         std::cout << "found=0\n";
       } else {
-        auto rendered = RenderValue(feature.value);
-        if (!rendered.ok()) {
-          status = rendered.status();
+        auto json = ValueAsJson(feature.value);
+        if (!json.ok()) {
+          status = json.status();
           goto done;
         }
+        const std::string value_b64 = Base64Encode(json.value());
         std::cout << "found=1"
-                  << " value=" << rendered.value()
+                  << " value_type=" << mxdb::ToString(feature.value.type)
+                  << " value_b64=" << value_b64
                   << " event_time_us=" << feature.event_time_us
                   << " system_time_us=" << feature.system_time_us << "\n";
       }

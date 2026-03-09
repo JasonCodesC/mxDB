@@ -1,3 +1,3 @@
-from .client import MXDBClient
+from .client import FeatureResult, MXDBClient, TypedFeatureResult
 
-__all__ = ["MXDBClient"]
+__all__ = ["MXDBClient", "FeatureResult", "TypedFeatureResult"]

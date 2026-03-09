@@ -113,6 +113,7 @@ build/featurectl featured.conf ingest prod instrument AAPL f_price 100 100 101.5
 
 ```bash
 build/featurectl featured.conf latest prod instrument AAPL f_price
+build/featurectl featured.conf latest prod instrument AAPL f_price 5
 build/featurectl featured.conf asof prod instrument AAPL f_price 100 100
 ```
 
@@ -130,8 +131,9 @@ from mxdb import MXDBClient
 client = MXDBClient("featured.conf")
 
 client.register_feature("prod", "instrument", "f_price", "price", "double")
+client.register_feature("prod", "instrument", "f_flag", "flag", "bool")
 
-client.ingest_double(
+client.ingest(
     tenant="prod",
     entity_type="instrument",
     entity_id="AAPL",
@@ -141,13 +143,28 @@ client.ingest_double(
     value=101.5,
     write_id="w1",
 )
+client.ingest(
+    tenant="prod",
+    entity_type="instrument",
+    entity_id="AAPL",
+    feature_id="f_flag",
+    event_time_us=101,
+    system_time_us=101,
+    value=True,
+    write_id="w2",
+)
 
-latest = client.latest_double("prod", "instrument", "AAPL", "f_price")
-asof = client.asof_double("prod", "instrument", "AAPL", "f_price", 100, 100)
+latest = client.latest("prod", "instrument", "AAPL", "f_price")
+latest_history = client.latest("prod", "instrument", "AAPL", "f_price", count=5)
+asof = client.asof("prod", "instrument", "AAPL", "f_price", 100, 100)
 
 print(latest)
+print(latest_history)
 print(asof)
 ```
+
+`latest(..., count=N)` returns up to `N` recent values (or fewer if less history is loaded in memory).
+Typed Python reads support: `bool`, `int64`, `double`, `string`, `float_vector`, `double_vector`.
 
 ### Binary Resolution Rules in Python SDK
 

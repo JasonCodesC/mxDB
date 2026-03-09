@@ -43,6 +43,18 @@ class MXDBClientTest(unittest.TestCase):
 
     def test_end_to_end_flow(self) -> None:
         self.client.register_feature("prod", "instrument", "f_price", "price", "double")
+        self.client.register_feature(
+            "prod", "instrument", "f_flag", "flag", "bool"
+        )
+        self.client.register_feature(
+            "prod", "instrument", "f_rank", "rank", "int64"
+        )
+        self.client.register_feature(
+            "prod", "instrument", "f_label", "label", "string"
+        )
+        self.client.register_feature(
+            "prod", "instrument", "f_vec", "vec", "double_vector"
+        )
 
         now = int(time.time() * 1_000_000)
         self.client.ingest_double(
@@ -55,6 +67,46 @@ class MXDBClientTest(unittest.TestCase):
             write_id="w1",
             system_time_us=now,
         )
+        self.client.ingest(
+            tenant="prod",
+            entity_type="instrument",
+            entity_id="AAPL",
+            feature_id="f_flag",
+            event_time_us=now,
+            value=True,
+            write_id="w2",
+            system_time_us=now,
+        )
+        self.client.ingest(
+            tenant="prod",
+            entity_type="instrument",
+            entity_id="AAPL",
+            feature_id="f_rank",
+            event_time_us=now,
+            value=7,
+            write_id="w3",
+            system_time_us=now,
+        )
+        self.client.ingest(
+            tenant="prod",
+            entity_type="instrument",
+            entity_id="AAPL",
+            feature_id="f_label",
+            event_time_us=now,
+            value="alpha beta",
+            write_id="w4",
+            system_time_us=now,
+        )
+        self.client.ingest(
+            tenant="prod",
+            entity_type="instrument",
+            entity_id="AAPL",
+            feature_id="f_vec",
+            event_time_us=now,
+            value=[1.0, 2.5, 3.25],
+            write_id="w5",
+            system_time_us=now,
+        )
 
         latest = self.client.latest_double("prod", "instrument", "AAPL", "f_price")
         self.assertTrue(latest.found)
@@ -65,6 +117,55 @@ class MXDBClientTest(unittest.TestCase):
         )
         self.assertTrue(asof.found)
         self.assertEqual(asof.value, 101.5)
+
+        latest_flag = self.client.latest("prod", "instrument", "AAPL", "f_flag")
+        self.assertTrue(latest_flag.found)
+        self.assertEqual(latest_flag.value_type, "bool")
+        self.assertEqual(latest_flag.value, True)
+
+        asof_rank = self.client.asof(
+            "prod", "instrument", "AAPL", "f_rank", now + 1, now + 1
+        )
+        self.assertTrue(asof_rank.found)
+        self.assertEqual(asof_rank.value_type, "int64")
+        self.assertEqual(asof_rank.value, 7)
+
+        latest_label = self.client.latest("prod", "instrument", "AAPL", "f_label")
+        self.assertTrue(latest_label.found)
+        self.assertEqual(latest_label.value_type, "string")
+        self.assertEqual(latest_label.value, "alpha beta")
+
+        latest_vec = self.client.latest("prod", "instrument", "AAPL", "f_vec")
+        self.assertTrue(latest_vec.found)
+        self.assertEqual(latest_vec.value_type, "double_vector")
+        self.assertEqual(latest_vec.value, [1.0, 2.5, 3.25])
+
+        self.client.ingest_double(
+            tenant="prod",
+            entity_type="instrument",
+            entity_id="AAPL",
+            feature_id="f_price",
+            event_time_us=now + 10,
+            value=102.5,
+            write_id="w6",
+            system_time_us=now + 10,
+        )
+        self.client.ingest_double(
+            tenant="prod",
+            entity_type="instrument",
+            entity_id="AAPL",
+            feature_id="f_price",
+            event_time_us=now + 20,
+            value=103.5,
+            write_id="w7",
+            system_time_us=now + 20,
+        )
+
+        latest_three = self.client.latest(
+            "prod", "instrument", "AAPL", "f_price", count=5
+        )
+        self.assertEqual(len(latest_three), 3)
+        self.assertEqual([x.value for x in latest_three], [103.5, 102.5, 101.5])
 
         backup_dir = self.tmp_path / "backup"
         self.client.checkpoint()

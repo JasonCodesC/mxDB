@@ -406,6 +406,63 @@ StatusOr<LatestQueryResult> FeatureEngine::GetLatest(
   return result;
 }
 
+StatusOr<std::vector<FeatureEvent>> FeatureEngine::GetLatestEvents(
+    const EntityKey& entity, const std::string& feature_id, size_t limit,
+    std::optional<Lsn> min_visible_lsn) const {
+  if (limit == 0) {
+    return Status::InvalidArgument("latest limit must be greater than zero");
+  }
+
+  std::shared_lock<std::shared_mutex> lock(mu_);
+  const PartitionState& partition = partitions_[PartitionForEntity(entity)];
+  EntityFeatureKey key{entity, feature_id};
+
+  std::vector<FeatureEvent> candidates;
+
+  auto mem_it = partition.timeline_by_entity_feature.find(key);
+  if (mem_it != partition.timeline_by_entity_feature.end()) {
+    candidates.insert(candidates.end(), mem_it->second.begin(), mem_it->second.end());
+  }
+
+  for (const auto& segment : partition.immutable_segments) {
+    auto seg_it = segment.timeline_by_entity_feature.find(key);
+    if (seg_it == segment.timeline_by_entity_feature.end()) {
+      continue;
+    }
+    candidates.insert(candidates.end(), seg_it->second.begin(), seg_it->second.end());
+  }
+
+  if (candidates.empty()) {
+    return std::vector<FeatureEvent>{};
+  }
+
+  std::sort(candidates.begin(), candidates.end(),
+            [](const FeatureEvent& lhs, const FeatureEvent& rhs) {
+              return IsNewer(lhs, rhs);
+            });
+
+  if (min_visible_lsn.has_value() && candidates.front().lsn < min_visible_lsn.value()) {
+    return Status::FailedPrecondition("latest value does not satisfy min_visible_lsn");
+  }
+
+  std::vector<FeatureEvent> output;
+  output.reserve(limit);
+  for (const auto& event : candidates) {
+    if (min_visible_lsn.has_value() && event.lsn < min_visible_lsn.value()) {
+      continue;
+    }
+    if (event.operation == OperationType::kDelete) {
+      continue;
+    }
+    output.push_back(event);
+    if (output.size() == limit) {
+      break;
+    }
+  }
+
+  return output;
+}
+
 StatusOr<AsOfLookupResult> FeatureEngine::AsOfLookup(
     const AsOfLookupInput& input) const {
   AsOfLookupResult result;

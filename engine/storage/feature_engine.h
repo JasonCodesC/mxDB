@@ -55,6 +55,9 @@ class FeatureEngine {
   StatusOr<LatestQueryResult> GetLatest(
       const EntityKey& entity, const std::vector<std::string>& feature_ids,
       std::optional<Lsn> min_visible_lsn = std::nullopt) const;
+  StatusOr<std::vector<FeatureEvent>> GetLatestEvents(
+      const EntityKey& entity, const std::string& feature_id, size_t limit,
+      std::optional<Lsn> min_visible_lsn = std::nullopt) const;
 
   StatusOr<AsOfLookupResult> AsOfLookup(const AsOfLookupInput& input) const;
 

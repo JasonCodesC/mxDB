@@ -138,6 +138,15 @@ int main() {
   assert(latest.value().features.size() == 1);
   assert(!latest.value().features[0].found);
 
+  auto latest_three = engine.GetLatestEvents(
+      {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"},
+      "f_price", 3);
+  assert(latest_three.ok());
+  assert(latest_three.value().size() == 3);
+  assert(std::get<double>(latest_three.value()[0].value.value) == 3.0);
+  assert(std::get<double>(latest_three.value()[1].value.value) == 2.0);
+  assert(std::get<double>(latest_three.value()[2].value.value) == 1.0);
+
   status = engine.Stop();
   assert(status.ok());
   status = metadata.Close();
