@@ -129,6 +129,30 @@ class MXDBClientTest(unittest.TestCase):
         self.client.backup(str(backup_dir))
         self.assertTrue((backup_dir / "data").exists())
 
+    def test_default_config_path_is_auto_created(self) -> None:
+        sdk_home = self.tmp_path / "sdk-home"
+        previous_home = os.environ.get("MXDB_HOME")
+        os.environ["MXDB_HOME"] = str(sdk_home)
+        try:
+            client = MXDBClient(featurectl_bin=self.featurectl_bin)
+            expected_config = sdk_home / "featured.conf"
+            self.assertEqual(Path(client.config_path), expected_config)
+            self.assertTrue(expected_config.exists())
+            self.assertIn("data_dir=", expected_config.read_text())
+
+            client.register_feature("prod", "f_price", "double")
+            row = client.entity("prod", "AAPL")
+            now = int(time.time() * 1_000_000)
+            row.upsert("f_price", now, 101.5)
+            latest = row.latest("f_price")
+            self.assertTrue(latest.found)
+            self.assertEqual(latest.value, 101.5)
+        finally:
+            if previous_home is None:
+                os.environ.pop("MXDB_HOME", None)
+            else:
+                os.environ["MXDB_HOME"] = previous_home
+
     def test_generic_type_roundtrip_matrix(self) -> None:
         self.client.register_feature("prod", "f_bool_false", "bool")
         self.client.register_feature("prod", "f_bool_true", "bool")

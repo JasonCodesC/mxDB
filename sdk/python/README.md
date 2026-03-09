@@ -60,7 +60,7 @@ from datetime import datetime, timezone, timedelta
 
 from mxdb import MXDBClient
 
-client = MXDBClient("featured.conf")
+client = MXDBClient()
 
 # 1) Register schema in namespace "quant"
 client.register_feature("quant", "f_price", "double")
@@ -125,7 +125,7 @@ print(after_delete_history)
 ```python
 from mxdb import MXDBClient
 
-client = MXDBClient("featured.conf")
+client = MXDBClient()
 client.register_feature("quant", "f_price", "double")
 
 for symbol, px in [("AAPL", 101.5), ("MSFT", 402.25), ("NVDA", 950.0)]:
@@ -184,3 +184,15 @@ print(snapshots)
 4. `featurectl` on `PATH`
 
 If none are found, construction fails with a clear error.
+
+## Config Resolution
+
+`MXDBClient` config path behavior:
+
+1. `MXDBClient(config_path="...")`: use explicit config file.
+2. `MXDBClient()`: auto-create/use `featured.conf` under:
+   - `MXDB_HOME/featured.conf` if `MXDB_HOME` is set
+   - otherwise `~/.mxdb/featured.conf`
+
+This default keeps Python local-first with zero setup, while still allowing
+explicit config files for shared CLI/Python workflows.

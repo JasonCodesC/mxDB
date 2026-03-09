@@ -150,7 +150,7 @@ from datetime import datetime, timezone, timedelta
 
 from mxdb import MXDBClient
 
-client = MXDBClient("featured.conf")
+client = MXDBClient()
 
 client.register_feature("prod", "f_price", "double")
 client.register_feature("prod", "f_flag", "bool")
