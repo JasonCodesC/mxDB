@@ -44,12 +44,12 @@ jobs:
           CIBW_BUILD: "cp310-* cp311-* cp312-*"
           CIBW_SKIP: "*-musllinux_* pp* *-win32"
           CIBW_ARCHS: "auto64"
-          CIBW_BEFORE_BUILD: "python -m pip install --upgrade pip cmake && python {package}/scripts/build_featurectl_for_wheel.py"
+          CIBW_BEFORE_BUILD: "python -m pip install --upgrade pip cmake wheel && python {package}/scripts/build_featurectl_for_wheel.py"
           CIBW_BUILD_VERBOSITY: "2"
           CIBW_BEFORE_ALL_LINUX: "yum install -y sqlite-devel || true"
           CIBW_BEFORE_ALL_WINDOWS: "python sdk/python/scripts/install_windows_sqlite.py"
           CIBW_ENVIRONMENT_WINDOWS: "MXDB_CMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake MXDB_VCPKG_TARGET_TRIPLET=x64-windows"
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "python {package}/scripts/repair_linux_wheel.py {wheel} {dest_dir}"
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: ""
           CIBW_TEST_COMMAND: "python -c \"from mxdb._binary import resolve_featurectl_binary; p=resolve_featurectl_binary(); print(p)\""
         uses: nick-fields/retry@v3
@@ -111,6 +111,22 @@ jobs:
         with:
           name: sdist
           path: dist
+
+      - name: Validate wheel platform tags
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          bad = [w.name for w in wheels if "-linux_" in w.name]
+          if bad:
+              print("Unsupported Linux wheel tag(s) detected:")
+              for name in bad:
+                  print(f" - {name}")
+              print("Expected manylinux tags for Linux wheels.")
+              sys.exit(1)
+          PY
 
       - name: Publish distribution to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

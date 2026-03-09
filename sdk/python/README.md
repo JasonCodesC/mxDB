@@ -16,6 +16,8 @@ pip install mxdb
 ```
 
 No local compiler/toolchain is required for standard wheel installs.
+Linux distributions are published with manylinux wheel tags (not raw
+`linux_x86_64`) so they are accepted by PyPI and install cleanly with pip.
 
 ## Basic Usage
 

@@ -44,8 +44,12 @@ Workflow: `.github/workflows/python-wheels.yml`
 - uses `cibuildwheel`
 - builds CPython wheels for macOS/Linux/Windows
 - runs `sdk/python/scripts/build_featurectl_for_wheel.py` before wheel build
+- runs `sdk/python/scripts/repair_linux_wheel.py` as the Linux repair hook:
+  it uses `auditwheel` first and falls back to explicit manylinux retagging when
+  the wheel only bundles a standalone executable payload
 - validates wheel import and binary resolution
 - on `v*` tags, publishes wheels + sdist to PyPI using trusted publishing
+- enforces a publish-time guard that fails if any wheel still has `-linux_` tags
 - wheel build step is retried automatically for transient upstream rate limits/errors
 
 ## Publish
