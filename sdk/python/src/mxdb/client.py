@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
-import uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,22 +47,12 @@ class MXDBEntityClient:
         value: Any,
     ) -> int:
         event_time_us = self._client._normalize_time_us(event_time)
-        write_id = self._client._new_write_id(
-            "upsert",
+        return self._client._upsert_entity(
             self.namespace,
-            self.entity_name,
-            feature_id,
-            event_time_us,
-        )
-        return self._client._ingest_entity(
-            self.namespace,
-            self._client.entity_type,
             self.entity_name,
             feature_id,
             event_time_us,
             value,
-            write_id,
-            operation="upsert",
         )
 
     def delete(
@@ -72,38 +61,27 @@ class MXDBEntityClient:
         event_time: TimeLike,
     ) -> int:
         event_time_us = self._client._normalize_time_us(event_time)
-        write_id = self._client._new_write_id(
-            "delete",
+        return self._client._delete_entity(
             self.namespace,
             self.entity_name,
             feature_id,
             event_time_us,
-        )
-        return self._client._ingest_entity(
-            self.namespace,
-            self._client.entity_type,
-            self.entity_name,
-            feature_id,
-            event_time_us,
-            0.0,
-            write_id,
-            operation="delete",
         )
 
     def latest(
         self, feature_id: str, count: int = 1
     ) -> TypedFeatureResult | list[TypedFeatureResult]:
         return self._client._latest_entity(
-            self.namespace, self._client.entity_type, self.entity_name, feature_id, count
+            self.namespace, self.entity_name, feature_id, count
         )
 
     def latest_double(self, feature_id: str) -> FeatureResult:
         return self._client._latest_double_entity(
-            self.namespace, self._client.entity_type, self.entity_name, feature_id
+            self.namespace, self.entity_name, feature_id
         )
 
     def get(self) -> dict[str, TypedFeatureResult]:
-        return self._client._get_entity(self.namespace, self._client.entity_type, self.entity_name)
+        return self._client._get_entity(self.namespace, self.entity_name)
 
     def get_range(
         self,
@@ -113,7 +91,6 @@ class MXDBEntityClient:
     ) -> list[TypedFeatureResult]:
         return self._client._get_range_entity(
             self.namespace,
-            self._client.entity_type,
             self.entity_name,
             feature_id,
             date_range,
@@ -127,11 +104,6 @@ class MXDBClient:
     ) -> None:
         self.config_path = str(config_path)
         self.featurectl_bin = resolve_featurectl_binary(featurectl_bin)
-        self._entity_type = "entity"
-
-    @property
-    def entity_type(self) -> str:
-        return self._entity_type
 
     def register_feature(
         self,
@@ -141,10 +113,8 @@ class MXDBClient:
     ) -> None:
         self._run(
             [
-                "register-feature",
+                "register",
                 namespace,
-                self.entity_type,
-                feature_name,
                 feature_name,
                 value_type,
             ]
@@ -153,51 +123,35 @@ class MXDBClient:
     def entity(self, namespace: str, entity_name: str) -> MXDBEntityClient:
         return MXDBEntityClient(self, namespace, entity_name)
 
-    @staticmethod
-    def _new_write_id(
-        operation: str,
-        namespace: str,
-        entity_name: str,
-        feature_id: str,
-        event_time_us: int,
-    ) -> str:
-        nonce = uuid.uuid4().hex
-        return (
-            f"py-{operation}-{namespace}-{entity_name}-{feature_id}-"
-            f"{event_time_us}-{nonce}"
-        )
-
-    def _ingest_entity(
+    def _upsert_entity(
         self,
         tenant: str,
-        entity_type: str,
         entity_id: str,
         feature_id: str,
         event_time_us: int,
         value: Any,
-        write_id: str,
-        system_time_us: Optional[int] = None,
-        operation: str = "upsert",
     ) -> int:
-        if operation not in ("upsert", "delete"):
-            raise ValueError("operation must be 'upsert' or 'delete'")
-
-        system_arg = "auto" if system_time_us is None else str(system_time_us)
         args = [
-            "ingest",
+            "upsert",
             tenant,
-            entity_type,
             entity_id,
             feature_id,
             str(event_time_us),
-            system_arg,
             self._encode_value_literal(value),
-            write_id,
         ]
-        if operation != "upsert":
-            args.append(operation)
+        out = self._run(args)
+        parts = self._parse_key_value_line(out)
+        return int(parts.get("lsn", "0"))
+
+    def _delete_entity(
+        self,
+        tenant: str,
+        entity_id: str,
+        feature_id: str,
+        event_time_us: int,
+    ) -> int:
         out = self._run(
-            args
+            ["delete", tenant, entity_id, feature_id, str(event_time_us)]
         )
         parts = self._parse_key_value_line(out)
         return int(parts.get("lsn", "0"))
@@ -205,7 +159,6 @@ class MXDBClient:
     def _latest_entity(
         self,
         tenant: str,
-        entity_type: str,
         entity_id: str,
         feature_id: str,
         count: int = 1,
@@ -213,7 +166,7 @@ class MXDBClient:
         if count < 1:
             raise ValueError("count must be >= 1")
 
-        args = ["latest", tenant, entity_type, entity_id, feature_id]
+        args = ["latest", tenant, entity_id, feature_id]
         if count > 1:
             args.append(str(count))
 
@@ -223,9 +176,9 @@ class MXDBClient:
         return self._parse_typed_feature_result_list(out)
 
     def _latest_double_entity(
-        self, tenant: str, entity_type: str, entity_id: str, feature_id: str
+        self, tenant: str, entity_id: str, feature_id: str
     ) -> FeatureResult:
-        typed = self._latest_entity(tenant, entity_type, entity_id, feature_id, count=1)
+        typed = self._latest_entity(tenant, entity_id, feature_id, count=1)
         if isinstance(typed, list):
             raise RuntimeError("unexpected list result for count=1")
         if not typed.found:
@@ -241,16 +194,13 @@ class MXDBClient:
             typed.system_time_us,
         )
 
-    def _get_entity(
-        self, tenant: str, entity_type: str, entity_id: str
-    ) -> dict[str, TypedFeatureResult]:
-        out = self._run(["get", tenant, entity_type, entity_id])
+    def _get_entity(self, tenant: str, entity_id: str) -> dict[str, TypedFeatureResult]:
+        out = self._run(["get", tenant, entity_id])
         return self._parse_typed_feature_result_map(out)
 
     def _get_range_entity(
         self,
         tenant: str,
-        entity_type: str,
         entity_id: str,
         feature_id: str,
         date_range: RangeLike,
@@ -260,7 +210,7 @@ class MXDBClient:
         if not isinstance(disk, bool):
             raise TypeError("disk must be a bool")
 
-        args = ["range", tenant, entity_type, entity_id, feature_id, str(furthest)]
+        args = ["range", tenant, entity_id, feature_id, str(furthest)]
         if latest is not None:
             args.append(str(latest))
         args.append("disk" if disk else "memory")
@@ -394,7 +344,7 @@ class MXDBClient:
         if isinstance(value, list):
             return json.dumps(value, separators=(",", ":"))
         raise TypeError(
-            "unsupported value type for ingest; expected bool/int/float/str/list"
+            "unsupported value type for upsert; expected bool/int/float/str/list"
         )
 
     @staticmethod

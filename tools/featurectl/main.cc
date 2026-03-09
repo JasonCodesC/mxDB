@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -20,6 +21,8 @@
 
 namespace {
 
+constexpr const char* kDefaultEntityType = "entity";
+
 mxdb::TimestampMicros NowMicros() {
   const auto now = std::chrono::system_clock::now();
   return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -37,12 +40,12 @@ void PrintUsage() {
       << "  readonly <on|off>\n"
       << "  backup <destination_dir>\n"
       << "  restore <source_dir> [readonly]\n"
-      << "  register-feature <tenant> <entity_type> <feature_id> <feature_name> <value_type>\n"
-      << "  ingest <tenant> <entity_type> <entity_id> <feature_id> <event_us> <system_us|auto> <value> <write_id> [upsert|delete]\n"
-      << "  get <tenant> <entity_type> <entity_id>\n"
-      << "  latest <tenant> <entity_type> <entity_id> <feature_id> [count]\n"
-      << "  range <tenant> <entity_type> <entity_id> <feature_id> <furthest_event_us> [latest_event_us] [disk|memory]\n"
-      << "  asof <tenant> <entity_type> <entity_id> <feature_id> <event_cutoff_us> <system_cutoff_us>\n";
+      << "  register <namespace> <feature_name> <value_type>\n"
+      << "  upsert <namespace> <entity_name> <feature_id> <event_us> <value>\n"
+      << "  delete <namespace> <entity_name> <feature_id> <event_us>\n"
+      << "  get <namespace> <entity_name>\n"
+      << "  latest <namespace> <entity_name> <feature_id> [count]\n"
+      << "  range <namespace> <entity_name> <feature_id> <furthest_event_us> [latest_event_us] [disk|memory]\n";
 }
 
 mxdb::StatusOr<mxdb::ValueType> ParseValueType(const std::string& value_type) {
@@ -237,11 +240,42 @@ mxdb::StatusOr<mxdb::FeatureValue> ParseLiteralForType(mxdb::ValueType type,
         return value;
       }
       default:
-        return mxdb::Status::InvalidArgument("unsupported value_type for ingest");
+        return mxdb::Status::InvalidArgument("unsupported value_type for write");
     }
   } catch (const std::exception&) {
     return mxdb::Status::InvalidArgument("invalid value literal for feature type");
   }
+}
+
+mxdb::StatusOr<mxdb::TimestampMicros> ParseTimestampMicros(
+    const std::string& raw, const std::string& field_name) {
+  try {
+    return std::stoll(raw);
+  } catch (const std::exception&) {
+    return mxdb::Status::InvalidArgument(field_name + " must be a valid integer timestamp");
+  }
+}
+
+std::string BuildAutoWriteId(const std::string& operation,
+                             const std::string& tenant,
+                             const std::string& entity_id,
+                             const std::string& feature_id,
+                             mxdb::TimestampMicros event_time_us) {
+  static std::atomic<uint64_t> sequence{0};
+  std::ostringstream out;
+  out << "featurectl-" << operation << "-" << tenant << "-" << entity_id << "-"
+      << feature_id << "-" << event_time_us << "-" << NowMicros() << "-"
+      << sequence.fetch_add(1, std::memory_order_relaxed);
+  return out.str();
+}
+
+mxdb::EntityKey BuildEntityKey(const std::string& tenant,
+                               const std::string& entity_id) {
+  return {
+      .tenant_id = tenant,
+      .entity_type = kDefaultEntityType,
+      .entity_id = entity_id,
+  };
 }
 
 mxdb::StatusOr<std::string> ValueAsJson(const mxdb::FeatureValue& value) {
@@ -363,6 +397,10 @@ int main(int argc, char** argv) {
 
   const std::string config_path = argv[1];
   const std::string command = argv[2];
+  if (command == "help" || command == "--help" || command == "-h") {
+    PrintUsage();
+    return 0;
+  }
 
   mxdb::EngineConfig config = mxdb::ConfigLoader::LoadFromFile(config_path);
 
@@ -421,13 +459,13 @@ int main(int argc, char** argv) {
     }
     const bool read_only = argc >= 5 && std::string(argv[4]) == "readonly";
     status = admin.RestoreBackup(argv[3], read_only);
-  } else if (command == "register-feature") {
-    if (argc < 8) {
+  } else if (command == "register") {
+    if (argc < 6) {
       PrintUsage();
       return 1;
     }
 
-    auto value_type = ParseValueType(argv[7]);
+    auto value_type = ParseValueType(argv[5]);
     if (!value_type.ok()) {
       std::cerr << value_type.status().message() << "\n";
       return 1;
@@ -435,9 +473,9 @@ int main(int argc, char** argv) {
 
     mxdb::FeatureDefinition feature;
     feature.tenant_id = argv[3];
-    feature.entity_type = argv[4];
-    feature.feature_id = argv[5];
-    feature.feature_name = argv[6];
+    feature.entity_type = kDefaultEntityType;
+    feature.feature_id = argv[4];
+    feature.feature_name = argv[4];
     feature.value_type = value_type.value();
     feature.serving_enabled = true;
     feature.historical_enabled = true;
@@ -449,63 +487,87 @@ int main(int argc, char** argv) {
     feature.updated_at_us = feature.created_at_us;
 
     status = metadata.CreateFeature(feature);
-  } else if (command == "ingest") {
-    if (argc < 11) {
+  } else if (command == "upsert") {
+    if (argc < 8) {
       PrintUsage();
       return 1;
     }
 
-    mxdb::OperationType operation = mxdb::OperationType::kUpsert;
-    if (argc >= 12) {
-      const std::string op = argv[11];
-      if (op == "upsert") {
-        operation = mxdb::OperationType::kUpsert;
-      } else if (op == "delete") {
-        operation = mxdb::OperationType::kDelete;
-      } else {
-        status =
-            mxdb::Status::InvalidArgument("operation must be upsert or delete");
-        goto done;
-      }
-    }
-
-    auto feature = metadata.GetFeatureById(argv[3], argv[6]);
+    auto feature = metadata.GetFeatureById(argv[3], argv[5]);
     if (!feature.ok()) {
       status = feature.status();
       goto done;
     }
 
-    mxdb::FeatureValue value;
-    if (operation == mxdb::OperationType::kDelete) {
-      value.type = feature.value().value_type;
-      value.value = std::monostate{};
-    } else {
-      auto parsed = ParseLiteralForType(feature.value().value_type, argv[9]);
-      if (!parsed.ok()) {
-        status = parsed.status();
-        goto done;
-      }
-      value = parsed.value();
+    auto event_time_us = ParseTimestampMicros(argv[6], "event_time_us");
+    if (!event_time_us.ok()) {
+      status = event_time_us.status();
+      goto done;
+    }
+
+    auto parsed_value = ParseLiteralForType(feature.value().value_type, argv[7]);
+    if (!parsed_value.ok()) {
+      status = parsed_value.status();
+      goto done;
     }
 
     mxdb::EntityFeatureBatch batch;
-    batch.entity = {.tenant_id = argv[3], .entity_type = argv[4], .entity_id = argv[5]};
-
+    batch.entity = BuildEntityKey(argv[3], argv[4]);
     mxdb::FeatureEventInput event;
-    event.feature_id = argv[6];
-    event.event_time_us = std::stoll(argv[7]);
-    if (std::string(argv[8]) != "auto") {
-      event.system_time_us = std::stoll(argv[8]);
-    }
-    event.value = value;
-    event.operation = operation;
-    event.write_id = argv[10];
+    event.feature_id = argv[5];
+    event.event_time_us = event_time_us.value();
+    event.value = parsed_value.value();
+    event.operation = mxdb::OperationType::kUpsert;
+    event.write_id =
+        BuildAutoWriteId("upsert", argv[3], argv[4], argv[5], event.event_time_us);
     event.source_id = "featurectl";
     batch.events.push_back(std::move(event));
 
-    auto result = engine.WriteEntityBatch(
-        batch, config.default_durability_mode,
-        /*allow_trusted_system_time=*/batch.events[0].system_time_us.has_value());
+    auto result = engine.WriteEntityBatch(batch, config.default_durability_mode,
+                                          /*allow_trusted_system_time=*/false);
+    if (!result.ok()) {
+      status = result.status();
+    } else {
+      std::cout << "accepted_events=" << result.value().accepted_events
+                << " lsn=" << result.value().commit.lsn << "\n";
+    }
+  } else if (command == "delete") {
+    if (argc < 7) {
+      PrintUsage();
+      return 1;
+    }
+
+    auto feature = metadata.GetFeatureById(argv[3], argv[5]);
+    if (!feature.ok()) {
+      status = feature.status();
+      goto done;
+    }
+
+    auto event_time_us = ParseTimestampMicros(argv[6], "event_time_us");
+    if (!event_time_us.ok()) {
+      status = event_time_us.status();
+      goto done;
+    }
+
+    mxdb::FeatureValue tombstone;
+    tombstone.type = feature.value().value_type;
+    tombstone.value = std::monostate{};
+
+    mxdb::EntityFeatureBatch batch;
+    batch.entity = BuildEntityKey(argv[3], argv[4]);
+
+    mxdb::FeatureEventInput event;
+    event.feature_id = argv[5];
+    event.event_time_us = event_time_us.value();
+    event.value = std::move(tombstone);
+    event.operation = mxdb::OperationType::kDelete;
+    event.write_id =
+        BuildAutoWriteId("delete", argv[3], argv[4], argv[5], event.event_time_us);
+    event.source_id = "featurectl";
+    batch.events.push_back(std::move(event));
+
+    auto result = engine.WriteEntityBatch(batch, config.default_durability_mode,
+                                          /*allow_trusted_system_time=*/false);
     if (!result.ok()) {
       status = result.status();
     } else {
@@ -513,12 +575,12 @@ int main(int argc, char** argv) {
                 << " lsn=" << result.value().commit.lsn << "\n";
     }
   } else if (command == "get") {
-    if (argc < 6) {
+    if (argc < 5) {
       PrintUsage();
       return 1;
     }
 
-    auto features = metadata.ListFeatures(argv[3], std::string(argv[4]));
+    auto features = metadata.ListFeatures(argv[3], kDefaultEntityType);
     if (!features.ok()) {
       status = features.status();
       goto done;
@@ -535,16 +597,11 @@ int main(int argc, char** argv) {
     }
 
     mxdb::LatestQueryResult snapshot;
-    auto latest = engine.GetLatest({.tenant_id = argv[3],
-                                    .entity_type = argv[4],
-                                    .entity_id = argv[5]},
-                                   feature_ids);
+    auto latest = engine.GetLatest(BuildEntityKey(argv[3], argv[4]), feature_ids);
     if (latest.ok()) {
       snapshot = latest.value();
     } else if (latest.status().code() == mxdb::StatusCode::kNotFound) {
-      snapshot.entity = {.tenant_id = argv[3],
-                         .entity_type = argv[4],
-                         .entity_id = argv[5]};
+      snapshot.entity = BuildEntityKey(argv[3], argv[4]);
       snapshot.visible_commit = {};
       snapshot.features.reserve(feature_ids.size());
       for (const auto& feature_id : feature_ids) {
@@ -568,15 +625,15 @@ int main(int argc, char** argv) {
               << " count=" << snapshot.features.size()
               << " values_b64=" << values_b64 << "\n";
   } else if (command == "latest") {
-    if (argc < 7) {
+    if (argc < 6) {
       PrintUsage();
       return 1;
     }
 
     size_t latest_count = 1;
-    if (argc >= 8) {
+    if (argc >= 7) {
       try {
-        latest_count = static_cast<size_t>(std::stoull(argv[7]));
+        latest_count = static_cast<size_t>(std::stoull(argv[6]));
       } catch (const std::exception&) {
         status = mxdb::Status::InvalidArgument("latest count must be a positive integer");
         goto done;
@@ -588,10 +645,7 @@ int main(int argc, char** argv) {
     }
 
     if (latest_count == 1) {
-      auto latest = engine.GetLatest({.tenant_id = argv[3],
-                                      .entity_type = argv[4],
-                                      .entity_id = argv[5]},
-                                     {argv[6]});
+      auto latest = engine.GetLatest(BuildEntityKey(argv[3], argv[4]), {argv[5]});
       if (!latest.ok()) {
         status = latest.status();
       } else {
@@ -614,10 +668,8 @@ int main(int argc, char** argv) {
         }
       }
     } else {
-      auto latest_events = engine.GetLatestEvents({.tenant_id = argv[3],
-                                                   .entity_type = argv[4],
-                                                   .entity_id = argv[5]},
-                                                  argv[6], latest_count);
+      auto latest_events =
+          engine.GetLatestEvents(BuildEntityKey(argv[3], argv[4]), argv[5], latest_count);
       if (!latest_events.ok()) {
         status = latest_events.status();
       } else if (latest_events.value().empty()) {
@@ -634,50 +686,15 @@ int main(int argc, char** argv) {
                   << " values_b64=" << values_b64 << "\n";
       }
     }
-  } else if (command == "asof") {
-    if (argc < 9) {
-      PrintUsage();
-      return 1;
-    }
-
-    auto as_of = engine.AsOfLookup({.entity = {.tenant_id = argv[3],
-                                               .entity_type = argv[4],
-                                               .entity_id = argv[5]},
-                                    .feature_ids = {argv[6]},
-                                    .event_cutoff_us = std::stoll(argv[7]),
-                                    .system_cutoff_us = std::stoll(argv[8])});
-    if (!as_of.ok()) {
-      status = as_of.status();
-    } else {
-      const auto& feature = as_of.value().features.at(0);
-      if (!feature.found) {
-        std::cout << "found=0\n";
-      } else {
-        auto json = ValueAsJson(feature.value);
-        if (!json.ok()) {
-          status = json.status();
-          goto done;
-        }
-        const std::string value_b64 = Base64Encode(json.value());
-        std::cout << "found=1"
-                  << " value_type=" << mxdb::ToString(feature.value.type)
-                  << " value_b64=" << value_b64
-                  << " event_time_us=" << feature.event_time_us
-                  << " system_time_us=" << feature.system_time_us << "\n";
-      }
-    }
   } else if (command == "range") {
-    if (argc < 8) {
+    if (argc < 7) {
       PrintUsage();
       return 1;
     }
 
-    mxdb::TimestampMicros furthest_event_us = 0;
-    try {
-      furthest_event_us = std::stoll(argv[7]);
-    } catch (const std::exception&) {
-      status = mxdb::Status::InvalidArgument(
-          "furthest_event_us must be a valid integer timestamp");
+    auto furthest_event_us = ParseTimestampMicros(argv[6], "furthest_event_us");
+    if (!furthest_event_us.ok()) {
+      status = furthest_event_us.status();
       goto done;
     }
 
@@ -697,34 +714,33 @@ int main(int argc, char** argv) {
           "range source must be disk|memory");
     };
 
-    if (argc >= 9) {
-      const std::string arg8 = argv[8];
-      if (arg8 == "disk" || arg8 == "memory" || arg8 == "mem") {
-        status = parse_source(arg8);
+    if (argc >= 8) {
+      const std::string arg7 = argv[7];
+      if (arg7 == "disk" || arg7 == "memory" || arg7 == "mem") {
+        status = parse_source(arg7);
         if (!status.ok()) {
           goto done;
         }
       } else {
-        try {
-          latest_event_us = std::stoll(arg8);
-        } catch (const std::exception&) {
-          status = mxdb::Status::InvalidArgument(
-              "latest_event_us must be a valid integer timestamp");
+        auto parsed_latest = ParseTimestampMicros(arg7, "latest_event_us");
+        if (!parsed_latest.ok()) {
+          status = parsed_latest.status();
           goto done;
         }
+        latest_event_us = parsed_latest.value();
       }
     }
 
-    if (argc >= 10) {
-      status = parse_source(argv[9]);
+    if (argc >= 9) {
+      status = parse_source(argv[8]);
       if (!status.ok()) {
         goto done;
       }
     }
 
     auto range_events = engine.GetRangeEvents(
-        {.tenant_id = argv[3], .entity_type = argv[4], .entity_id = argv[5]},
-        argv[6], furthest_event_us, latest_event_us, include_disk);
+        BuildEntityKey(argv[3], argv[4]), argv[5], furthest_event_us.value(),
+        latest_event_us, include_disk);
     if (!range_events.ok()) {
       status = range_events.status();
     } else if (range_events.value().empty()) {

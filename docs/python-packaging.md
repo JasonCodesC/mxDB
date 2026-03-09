@@ -19,6 +19,8 @@ Public SDK read/write usage is entity-scoped through
 `MXDBClient.entity(namespace, entity_name)`.
 Feature registration uses
 `MXDBClient.register_feature(namespace, feature_name, value_type)`.
+Entity writes use `row.upsert(...)` and `row.delete(...)`; reads use
+`row.latest(...)`, `row.get()`, and `row.get_range(...)`.
 
 ## Local Wheel Build
 

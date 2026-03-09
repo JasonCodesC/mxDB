@@ -25,6 +25,15 @@ The public API is namespace + entity-centric:
 
 `system_time` and `write_id` are intentionally hidden in Python.
 
+Equivalent `featurectl` commands used under the hood:
+
+- `register <namespace> <feature_name> <value_type>`
+- `upsert <namespace> <entity_name> <feature_id> <event_us> <value>`
+- `delete <namespace> <entity_name> <feature_id> <event_us>`
+- `get <namespace> <entity_name>`
+- `latest <namespace> <entity_name> <feature_id> [count]`
+- `range <namespace> <entity_name> <feature_id> <furthest> [latest] [disk|memory]`
+
 ## `get_range` Semantics
 
 `row.get_range(feature_id, date_range, disk=True)` returns a newest-first list of
@@ -56,6 +65,7 @@ client.register_feature("quant", "f_price", "double")
 client.register_feature("quant", "f_flag", "bool")
 client.register_feature("quant", "f_note", "string")
 client.register_feature("quant", "f_vec", "double_vector")
+client.register_feature("quant", "f_size", "int64")
 
 # 2) Bind one entity key (row/index)
 aapl = client.entity("quant", "AAPL")
@@ -67,6 +77,7 @@ aapl.upsert("f_price", base + timedelta(seconds=5), 102.0)
 aapl.upsert("f_flag", base + timedelta(seconds=1), True)
 aapl.upsert("f_note", base + timedelta(seconds=2), 'quote " ok')
 aapl.upsert("f_vec", base + timedelta(seconds=3), [1.0, 2.5, 3.25])
+aapl.upsert("f_size", base + timedelta(seconds=4), 1_500_000)
 
 # 4) Latest reads
 latest_price = aapl.latest("f_price")
@@ -85,6 +96,8 @@ bounded = aapl.get_range(
 open_ended = aapl.get_range("f_price", "2026:03:09:12:00:00")
 # memory-only view
 memory_only = aapl.get_range("f_price", (base + timedelta(seconds=10), base), disk=False)
+# ISO-8601 timestamps are also supported
+iso_range = aapl.get_range("f_price", ("2026-03-09T12:00:05Z", base))
 
 # 7) Delete latest value (tombstone)
 aapl.delete("f_price", base + timedelta(seconds=10))
@@ -98,8 +111,28 @@ print(snapshot)
 print(bounded)
 print(open_ended)
 print(memory_only)
+print(iso_range)
 print(after_delete_latest)
 print(after_delete_history)
+```
+
+## Additional Example: Multi-Entity Reads
+
+```python
+from mxdb import MXDBClient
+
+client = MXDBClient("featured.conf")
+client.register_feature("quant", "f_price", "double")
+
+for symbol, px in [("AAPL", 101.5), ("MSFT", 402.25), ("NVDA", 950.0)]:
+    row = client.entity("quant", symbol)
+    row.upsert("f_price", 1_700_000_000_000_000, px)
+
+snapshots = {
+    symbol: client.entity("quant", symbol).get()["f_price"].value
+    for symbol in ("AAPL", "MSFT", "NVDA")
+}
+print(snapshots)
 ```
 
 ## Value Types

@@ -100,31 +100,34 @@ cp deploy/config/featured.conf.example featured.conf
 2. Register a feature:
 
 ```bash
-build/featurectl featured.conf register-feature prod instrument f_price price double
-build/featurectl featured.conf register-feature prod instrument f_flag flag bool
+build/featurectl featured.conf register prod f_price double
+build/featurectl featured.conf register prod f_flag bool
+build/featurectl featured.conf register prod f_note string
 ```
 
-3. Ingest a value:
+3. Write values:
 
 ```bash
-build/featurectl featured.conf ingest prod instrument AAPL f_price 100 100 101.5 w1
-build/featurectl featured.conf ingest prod instrument AAPL f_flag 101 101 true w2
-build/featurectl featured.conf ingest prod instrument AAPL f_price 102 102 0.0 w3 delete
+build/featurectl featured.conf upsert prod AAPL f_price 100 101.5
+build/featurectl featured.conf upsert prod AAPL f_flag 101 true
+build/featurectl featured.conf upsert prod AAPL f_note 102 "opening print"
+build/featurectl featured.conf delete prod AAPL f_price 103
 ```
 
-4. Read latest and as-of values:
+4. Read latest/snapshot/range values:
 
 ```bash
-build/featurectl featured.conf latest prod instrument AAPL f_price
-build/featurectl featured.conf latest prod instrument AAPL f_price 5
-build/featurectl featured.conf range prod instrument AAPL f_price 100 200 disk
-build/featurectl featured.conf get prod instrument AAPL
-build/featurectl featured.conf asof prod instrument AAPL f_price 100 100
+build/featurectl featured.conf latest prod AAPL f_price
+build/featurectl featured.conf latest prod AAPL f_price 5
+build/featurectl featured.conf get prod AAPL
+# furthest only => open-ended after furthest
+build/featurectl featured.conf range prod AAPL f_price 100
+# bounded [furthest, latest], with memory-only source
+build/featurectl featured.conf range prod AAPL f_price 100 200 memory
 ```
 
-Supported CLI value types for `register-feature`:
+Supported CLI value types for `register`:
 `double`, `int64`, `string`, `bool`, `float_vector`, `double_vector`.
-`ingest` operation supports `upsert` (default) and `delete`.
 
 5. Check health:
 
@@ -144,6 +147,8 @@ client = MXDBClient("featured.conf")
 client.register_feature("prod", "f_price", "double")
 client.register_feature("prod", "f_flag", "bool")
 client.register_feature("prod", "f_note", "string")
+client.register_feature("prod", "f_size", "int64")
+client.register_feature("prod", "f_curve", "double_vector")
 
 aapl = client.entity("prod", "AAPL")
 
@@ -152,6 +157,8 @@ aapl.upsert("f_price", base, 101.5)
 aapl.upsert("f_price", base + timedelta(seconds=5), 102.0)
 aapl.upsert("f_flag", base + timedelta(seconds=1), True)
 aapl.upsert("f_note", base + timedelta(seconds=2), "starting coverage")
+aapl.upsert("f_size", base + timedelta(seconds=3), 1_500_000)
+aapl.upsert("f_curve", base + timedelta(seconds=4), [1.0, 2.5, 3.25])
 
 latest = aapl.latest("f_price")
 latest_history = aapl.latest("f_price", count=5)
@@ -163,6 +170,11 @@ bounded = aapl.get_range(
 open_ended = aapl.get_range("f_price", "2026:03:09:12:00:00")
 # disk=False => memory-only view
 memory_only = aapl.get_range("f_price", (base + timedelta(seconds=10), base), disk=False)
+# ISO-8601 + datetime range input works too
+iso_range = aapl.get_range(
+    "f_price",
+    ("2026-03-09T12:00:05Z", base),
+)
 aapl.delete("f_price", base + timedelta(seconds=10))
 
 print(latest)
@@ -171,12 +183,13 @@ print(snapshot)
 print(bounded)
 print(open_ended)
 print(memory_only)
+print(iso_range)
 ```
 
 The Python SDK public read/write API is namespace + entity scoped:
 `row = client.entity(namespace, entity_name)`.
 
-`entity.latest(..., count=N)` returns up to `N` recent values (or fewer if less history is loaded in memory).
+`entity.latest(..., count=N)` returns up to `N` recent values.
 Typed Python reads support: `bool`, `int64`, `double`, `string`, `float_vector`, `double_vector`.
 
 Public write API is simplified:
