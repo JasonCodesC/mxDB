@@ -52,6 +52,20 @@ def discover_repo_root(start: Path) -> Path:
     )
 
 
+def configure_args_for_env() -> list[str]:
+    args: list[str] = []
+
+    toolchain = os.environ.get("MXDB_CMAKE_TOOLCHAIN_FILE")
+    if toolchain:
+        args.append(f"-DCMAKE_TOOLCHAIN_FILE={toolchain}")
+
+    triplet = os.environ.get("MXDB_VCPKG_TARGET_TRIPLET")
+    if triplet:
+        args.append(f"-DVCPKG_TARGET_TRIPLET={triplet}")
+
+    return args
+
+
 def main() -> int:
     script_path = Path(__file__).resolve()
     package_root = script_path.parents[1]  # sdk/python
@@ -62,7 +76,9 @@ def main() -> int:
     )
     shutil.rmtree(build_dir, ignore_errors=True)
 
-    run(["cmake", "-S", str(repo_root), "-B", str(build_dir)])
+    configure_cmd = ["cmake", "-S", str(repo_root), "-B", str(build_dir)]
+    configure_cmd.extend(configure_args_for_env())
+    run(configure_cmd)
 
     build_cmd = ["cmake", "--build", str(build_dir), "--target", "featurectl"]
     if sys.platform.startswith("win"):

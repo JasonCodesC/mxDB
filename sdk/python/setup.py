@@ -55,7 +55,9 @@ class build_py(_build_py):
         )
         shutil.rmtree(build_dir, ignore_errors=True)
 
-        self._run(["cmake", "-S", str(repo_root), "-B", str(build_dir)])
+        configure_cmd = ["cmake", "-S", str(repo_root), "-B", str(build_dir)]
+        configure_cmd.extend(self._configure_args_for_env())
+        self._run(configure_cmd)
 
         build_cmd = ["cmake", "--build", str(build_dir), "--target", "featurectl"]
         if sys.platform.startswith("win"):
@@ -69,6 +71,20 @@ class build_py(_build_py):
     @staticmethod
     def _run(cmd: list[str]) -> None:
         subprocess.run(cmd, check=True)
+
+    @staticmethod
+    def _configure_args_for_env() -> list[str]:
+        args: list[str] = []
+
+        toolchain = os.environ.get("MXDB_CMAKE_TOOLCHAIN_FILE")
+        if toolchain:
+            args.append(f"-DCMAKE_TOOLCHAIN_FILE={toolchain}")
+
+        triplet = os.environ.get("MXDB_VCPKG_TARGET_TRIPLET")
+        if triplet:
+            args.append(f"-DVCPKG_TARGET_TRIPLET={triplet}")
+
+        return args
 
     @staticmethod
     def _find_built_binary(build_dir: Path, exe_name: str) -> Path:
