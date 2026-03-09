@@ -475,22 +475,20 @@ class MXDBClientTest(unittest.TestCase):
         self.assertFalse((self._data_dir_path() / ".featurectl.process.lock").exists())
 
     def test_stale_process_lock_has_recovery_path(self) -> None:
-        lock_path = self._process_lock_path()
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path.write_text("orphan lock file")
+        legacy_lock_dir = self._data_dir_path() / ".featurectl.process.lock"
+        legacy_lock_dir.mkdir(parents=True, exist_ok=True)
+        (legacy_lock_dir / "orphan").write_text("stale")
 
         proc = self._run_featurectl("health")
-        self.assertEqual(proc.returncode, 0)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("legacy lock artifact detected", proc.stderr)
+        self.assertIn(".featurectl.process.lock", proc.stderr)
 
     def test_backup_snapshot_excludes_process_lock_artifact(self) -> None:
         self.client.register_feature("prod", "f_price", "double")
         aapl = self.client.entity("prod", "AAPL")
         now = int(time.time() * 1_000_000)
         aapl.upsert("f_price", now, 101.5)
-
-        legacy_lock_dir = self._data_dir_path() / ".featurectl.process.lock"
-        legacy_lock_dir.mkdir(parents=True, exist_ok=True)
-        (legacy_lock_dir / "stale").write_text("stale")
 
         backup_dir = self.tmp_path / "backup-lock-filter"
         self.client.backup(str(backup_dir))

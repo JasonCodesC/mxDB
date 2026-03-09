@@ -127,10 +127,23 @@ StatusOr<std::filesystem::path> DataDirProcessLock::ResolveLockPath(
 StatusOr<DataDirProcessLock> DataDirProcessLock::Acquire(
     const std::string& data_dir, const std::string& owner) {
   std::error_code ec;
-  std::filesystem::create_directories(std::filesystem::path(data_dir), ec);
+  const std::filesystem::path data_root(data_dir);
+  std::filesystem::create_directories(data_root, ec);
   if (ec) {
     return Status::Internal("failed to create data_dir for process lock: " +
                             ec.message());
+  }
+
+  const std::filesystem::path legacy_lock_dir =
+      data_root / ".featurectl.process.lock";
+  if (std::filesystem::exists(legacy_lock_dir, ec)) {
+    if (ec) {
+      return Status::Internal("failed to inspect legacy process lock path: " +
+                              ec.message());
+    }
+    return Status::FailedPrecondition(
+        "legacy lock artifact detected at '" + legacy_lock_dir.string() +
+        "'. remove stale '.featurectl.process.lock' directory and retry");
   }
 
   auto lock_path_or = ResolveLockPath(data_dir);
