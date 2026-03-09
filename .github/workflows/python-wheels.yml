@@ -49,7 +49,8 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: "yum install -y sqlite-devel || true"
           CIBW_BEFORE_ALL_WINDOWS: "python sdk/python/scripts/install_windows_sqlite.py"
           CIBW_ENVIRONMENT_WINDOWS: "MXDB_CMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake MXDB_VCPKG_TARGET_TRIPLET=x64-windows"
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "python {package}/scripts/repair_linux_wheel.py {wheel} {dest_dir}"
+          # cibuildwheel 2.21.x does not expand {package} here; Linux containers mount the repo at /project.
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "python /project/sdk/python/scripts/repair_linux_wheel.py {wheel} {dest_dir}"
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: ""
           CIBW_TEST_COMMAND: "python -c \"from mxdb._binary import resolve_featurectl_binary; p=resolve_featurectl_binary(); print(p)\""
         uses: nick-fields/retry@v3
