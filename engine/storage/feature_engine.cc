@@ -440,6 +440,7 @@ StatusOr<LatestQueryResult> FeatureEngine::GetLatest(
 
 StatusOr<std::vector<FeatureEvent>> FeatureEngine::GetLatestEvents(
     const EntityKey& entity, const std::string& feature_id, size_t limit,
+    bool include_disk,
     std::optional<Lsn> min_visible_lsn) const {
   if (limit == 0) {
     return Status::InvalidArgument("latest limit must be greater than zero");
@@ -460,12 +461,15 @@ StatusOr<std::vector<FeatureEvent>> FeatureEngine::GetLatestEvents(
     candidates.insert(candidates.end(), mem_it->second.begin(), mem_it->second.end());
   }
 
-  for (const auto& segment : partition.immutable_segments) {
-    auto seg_it = segment.timeline_by_entity_feature.find(key);
-    if (seg_it == segment.timeline_by_entity_feature.end()) {
-      continue;
+  if (include_disk) {
+    for (const auto& segment : partition.immutable_segments) {
+      auto seg_it = segment.timeline_by_entity_feature.find(key);
+      if (seg_it == segment.timeline_by_entity_feature.end()) {
+        continue;
+      }
+      candidates.insert(candidates.end(), seg_it->second.begin(),
+                        seg_it->second.end());
     }
-    candidates.insert(candidates.end(), seg_it->second.begin(), seg_it->second.end());
   }
 
   if (candidates.empty()) {
@@ -486,7 +490,7 @@ StatusOr<std::vector<FeatureEvent>> FeatureEngine::GetLatestEvents(
   }
 
   std::vector<FeatureEvent> output;
-  output.reserve(limit);
+  output.reserve(std::min(limit, candidates.size()));
   for (const auto& event : candidates) {
     if (min_visible_lsn.has_value() && event.lsn < min_visible_lsn.value()) {
       continue;
@@ -498,6 +502,80 @@ StatusOr<std::vector<FeatureEvent>> FeatureEngine::GetLatestEvents(
     if (output.size() == limit) {
       break;
     }
+  }
+
+  return output;
+}
+
+StatusOr<std::vector<FeatureEvent>> FeatureEngine::GetRangeEvents(
+    const EntityKey& entity, const std::string& feature_id,
+    TimestampMicros furthest_event_time_us,
+    std::optional<TimestampMicros> latest_event_time_us, bool include_disk,
+    std::optional<Lsn> min_visible_lsn) const {
+  if (latest_event_time_us.has_value() &&
+      latest_event_time_us.value() < furthest_event_time_us) {
+    return Status::InvalidArgument(
+        "latest event time must be greater than or equal to furthest event time");
+  }
+
+  std::shared_lock<std::shared_mutex> lock(mu_);
+  Status lifecycle = EnsureStartedForReadLocked();
+  if (!lifecycle.ok()) {
+    return lifecycle;
+  }
+  const PartitionState& partition = partitions_[PartitionForEntity(entity)];
+  EntityFeatureKey key{entity, feature_id};
+
+  std::vector<FeatureEvent> candidates;
+
+  auto mem_it = partition.timeline_by_entity_feature.find(key);
+  if (mem_it != partition.timeline_by_entity_feature.end()) {
+    candidates.insert(candidates.end(), mem_it->second.begin(), mem_it->second.end());
+  }
+
+  if (include_disk) {
+    for (const auto& segment : partition.immutable_segments) {
+      auto seg_it = segment.timeline_by_entity_feature.find(key);
+      if (seg_it == segment.timeline_by_entity_feature.end()) {
+        continue;
+      }
+      candidates.insert(candidates.end(), seg_it->second.begin(),
+                        seg_it->second.end());
+    }
+  }
+
+  if (candidates.empty()) {
+    return std::vector<FeatureEvent>{};
+  }
+
+  std::sort(candidates.begin(), candidates.end(),
+            [](const FeatureEvent& lhs, const FeatureEvent& rhs) {
+              return IsNewer(lhs, rhs);
+            });
+
+  if (min_visible_lsn.has_value() &&
+      candidates.front().lsn < min_visible_lsn.value()) {
+    return Status::FailedPrecondition(
+        "latest value does not satisfy min_visible_lsn");
+  }
+
+  std::vector<FeatureEvent> output;
+  output.reserve(candidates.size());
+  for (const auto& event : candidates) {
+    if (min_visible_lsn.has_value() && event.lsn < min_visible_lsn.value()) {
+      continue;
+    }
+    if (event.operation == OperationType::kDelete) {
+      continue;
+    }
+    if (event.event_time_us < furthest_event_time_us) {
+      continue;
+    }
+    if (latest_event_time_us.has_value() &&
+        event.event_time_us > latest_event_time_us.value()) {
+      continue;
+    }
+    output.push_back(event);
   }
 
   return output;

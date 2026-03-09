@@ -117,6 +117,7 @@ build/featurectl featured.conf ingest prod instrument AAPL f_price 102 102 0.0 w
 ```bash
 build/featurectl featured.conf latest prod instrument AAPL f_price
 build/featurectl featured.conf latest prod instrument AAPL f_price 5
+build/featurectl featured.conf range prod instrument AAPL f_price 100 200 disk
 build/featurectl featured.conf get prod instrument AAPL
 build/featurectl featured.conf asof prod instrument AAPL f_price 100 100
 ```
@@ -134,51 +135,73 @@ build/featurectl featured.conf health
 ## Quickstart (Python)
 
 ```python
+from datetime import datetime, timezone, timedelta
+
 from mxdb import MXDBClient
 
 client = MXDBClient("featured.conf")
 
-client.register_feature("prod", "instrument", "f_price", "price", "double")
-client.register_feature("prod", "instrument", "f_flag", "flag", "bool")
+client.register_feature("prod", "f_price", "double")
+client.register_feature("prod", "f_flag", "bool")
+client.register_feature("prod", "f_note", "string")
 
-aapl = client.entity("prod", "instrument", "AAPL")
+aapl = client.entity("prod", "AAPL")
 
-aapl.ingest("f_price", 100, 101.5, "w1", system_time_us=100)
-aapl.ingest("f_flag", 101, True, "w2", system_time_us=101)
+base = datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)
+aapl.upsert("f_price", base, 101.5)
+aapl.upsert("f_price", base + timedelta(seconds=5), 102.0)
+aapl.upsert("f_flag", base + timedelta(seconds=1), True)
+aapl.upsert("f_note", base + timedelta(seconds=2), "starting coverage")
 
 latest = aapl.latest("f_price")
 latest_history = aapl.latest("f_price", count=5)
 snapshot = aapl.get()
-asof = aapl.asof("f_price", 100, 100)
-# system cutoff can be omitted (defaults to now)
-asof_now = aapl.asof("f_price", "2026:03:09:12:00:00")
-# range form: latest visible value inside [start, end]
-asof_range = aapl.asof("f_price", ("2026:03:09:12:00:00.000", "2026:03:09:12:10:00.000"))
+bounded = aapl.get_range(
+    "f_price", ("2026:03:09:12:00:05.000", "2026:03:09:12:00:00.000")
+)
+# latest omitted => everything after furthest
+open_ended = aapl.get_range("f_price", "2026:03:09:12:00:00")
+# disk=False => memory-only view
+memory_only = aapl.get_range("f_price", (base + timedelta(seconds=10), base), disk=False)
+aapl.delete("f_price", base + timedelta(seconds=10))
 
 print(latest)
 print(latest_history)
 print(snapshot)
-print(asof)
-print(asof_now)
-print(asof_range)
+print(bounded)
+print(open_ended)
+print(memory_only)
 ```
 
-The Python SDK public read/write API is entity-scoped via `client.entity(...)`.
+The Python SDK public read/write API is namespace + entity scoped:
+`row = client.entity(namespace, entity_name)`.
 
 `entity.latest(..., count=N)` returns up to `N` recent values (or fewer if less history is loaded in memory).
 Typed Python reads support: `bool`, `int64`, `double`, `string`, `float_vector`, `double_vector`.
+
+Public write API is simplified:
+
+- `entity.upsert(feature_id, event_time, value)`
+- `entity.delete(feature_id, event_time)`
+
+`system_time` and `write_id` are hidden in Python and generated automatically.
 
 Return shapes:
 
 - `entity.latest(..., count=1)` -> `TypedFeatureResult`
 - `entity.latest(..., count>1)` -> `list[TypedFeatureResult]`
 - `entity.get()` -> `dict[str, TypedFeatureResult]`
-- `entity.asof(...)` -> `TypedFeatureResult`
+- `entity.get_range(...)` -> `list[TypedFeatureResult]`
 
-`MXDBEntityClient.asof(...)` accepts epoch micros (`int`) or friendly timestamp strings
-(`YYYY:MM:DD:HH:MM:SS[.ffffff]` or ISO-8601). It also accepts `(start, end)` ranges and
-returns the latest visible value in that closed interval. `system_cutoff` is optional and
-defaults to `now`.
+`entity.get_range(feature_id, date_range, disk=True)`:
+
+- `date_range=(latest, furthest)` returns values in `[furthest, latest]`
+- `date_range=furthest` returns everything after furthest
+- `disk=True` includes memory + immutable segments
+- `disk=False` includes only in-memory values
+
+For a larger end-to-end Python example that exercises all methods, see
+[sdk/python/README.md](sdk/python/README.md).
 
 ### Binary Resolution Rules in Python SDK
 

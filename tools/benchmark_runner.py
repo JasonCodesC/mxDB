@@ -22,7 +22,7 @@ def main() -> int:
     args = parse_args()
     client = MXDBClient(args.config, args.featurectl_bin)
 
-    client.register_feature("prod", "instrument", "f_price", "price", "double")
+    client.register_feature("prod", "f_price", "double")
 
     entity_ids = [f"E{i:06d}" for i in range(args.entities)]
     base_time = int(time.time() * 1_000_000)
@@ -30,22 +30,15 @@ def main() -> int:
     t0 = time.perf_counter()
     for i in range(args.writes):
         entity_id = entity_ids[i % args.entities]
-        client.ingest_double(
-            tenant="prod",
-            entity_type="instrument",
-            entity_id=entity_id,
-            feature_id="f_price",
-            event_time_us=base_time + i,
-            system_time_us=base_time + i,
-            value=float(i),
-            write_id=f"bench-write-{i}",
-        )
+        row = client.entity("prod", entity_id)
+        row.upsert("f_price", base_time + i, float(i))
     write_s = time.perf_counter() - t0
 
     t1 = time.perf_counter()
     for _ in range(args.reads):
         entity_id = random.choice(entity_ids)
-        client.latest_double("prod", "instrument", entity_id, "f_price")
+        row = client.entity("prod", entity_id)
+        row.latest_double("f_price")
     read_s = time.perf_counter() - t1
 
     print(f"writes={args.writes} duration_s={write_s:.3f} qps={args.writes / write_s:.1f}")

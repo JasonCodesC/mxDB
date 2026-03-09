@@ -16,7 +16,9 @@ This project ships `mxdb` Python wheels with a bundled native `featurectl` binar
 4. `featurectl` on `PATH`
 
 Public SDK read/write usage is entity-scoped through
-`MXDBClient.entity(tenant, entity_type, entity_id)`.
+`MXDBClient.entity(namespace, entity_name)`.
+Feature registration uses
+`MXDBClient.register_feature(namespace, feature_name, value_type)`.
 
 ## Local Wheel Build
 

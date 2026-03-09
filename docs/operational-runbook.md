@@ -37,6 +37,7 @@ build/featurectl featured.conf ingest prod instrument AAPL f_flag 101 101 true w
 build/featurectl featured.conf ingest prod instrument AAPL f_price 102 102 0.0 w3 delete
 build/featurectl featured.conf latest prod instrument AAPL f_price
 build/featurectl featured.conf latest prod instrument AAPL f_price 5
+build/featurectl featured.conf range prod instrument AAPL f_price 100 200 disk
 build/featurectl featured.conf get prod instrument AAPL
 build/featurectl featured.conf asof prod instrument AAPL f_price 100 100
 ```
@@ -47,6 +48,11 @@ Supported CLI value types:
 `ingest` operation:
 - default is `upsert`
 - pass final argument `delete` to write tombstones
+
+`range` operation:
+- required: `furthest_event_us`
+- optional: `latest_event_us` (if omitted, returns everything after furthest)
+- optional source selector: `disk` (default) or `memory`
 
 ## Checkpoint and Compaction
 

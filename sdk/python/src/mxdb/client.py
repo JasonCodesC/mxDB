@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
-import time
+import uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,8 +12,7 @@ from typing import Any, Optional
 from ._binary import resolve_featurectl_binary
 
 TimeLike = int | float | str | datetime
-TimeRangeLike = tuple[TimeLike, TimeLike] | list[TimeLike]
-TimePointOrRange = TimeLike | TimeRangeLike
+RangeLike = TimeLike | tuple[TimeLike, TimeLike] | list[TimeLike]
 
 
 @dataclass
@@ -36,116 +35,89 @@ class TypedFeatureResult:
 
 class MXDBEntityClient:
     def __init__(
-        self, client: "MXDBClient", tenant: str, entity_type: str, entity_id: str
+        self, client: "MXDBClient", namespace: str, entity_name: str
     ) -> None:
         self._client = client
-        self.tenant = tenant
-        self.entity_type = entity_type
-        self.entity_id = entity_id
+        self.namespace = namespace
+        self.entity_name = entity_name
 
-    def ingest(
+    def upsert(
         self,
         feature_id: str,
-        event_time_us: int,
+        event_time: TimeLike,
         value: Any,
-        write_id: str,
-        system_time_us: Optional[int] = None,
-        operation: str = "upsert",
     ) -> int:
-        return self._client._ingest_entity(
-            self.tenant,
-            self.entity_type,
-            self.entity_id,
-            feature_id,
-            event_time_us,
-            value,
-            write_id,
-            system_time_us,
-            operation,
-        )
-
-    def ingest_double(
-        self,
-        feature_id: str,
-        event_time_us: int,
-        value: float,
-        write_id: str,
-        system_time_us: Optional[int] = None,
-    ) -> int:
-        return self._client._ingest_entity(
-            self.tenant,
-            self.entity_type,
-            self.entity_id,
-            feature_id,
-            event_time_us,
-            value,
-            write_id,
-            system_time_us,
+        event_time_us = self._client._normalize_time_us(event_time)
+        write_id = self._client._new_write_id(
             "upsert",
+            self.namespace,
+            self.entity_name,
+            feature_id,
+            event_time_us,
+        )
+        return self._client._ingest_entity(
+            self.namespace,
+            self._client.entity_type,
+            self.entity_name,
+            feature_id,
+            event_time_us,
+            value,
+            write_id,
+            operation="upsert",
         )
 
     def delete(
         self,
         feature_id: str,
-        event_time_us: int,
-        write_id: str,
-        system_time_us: Optional[int] = None,
+        event_time: TimeLike,
     ) -> int:
+        event_time_us = self._client._normalize_time_us(event_time)
+        write_id = self._client._new_write_id(
+            "delete",
+            self.namespace,
+            self.entity_name,
+            feature_id,
+            event_time_us,
+        )
         return self._client._ingest_entity(
-            self.tenant,
-            self.entity_type,
-            self.entity_id,
+            self.namespace,
+            self._client.entity_type,
+            self.entity_name,
             feature_id,
             event_time_us,
             0.0,
             write_id,
-            system_time_us,
-            "delete",
+            operation="delete",
         )
 
     def latest(
         self, feature_id: str, count: int = 1
     ) -> TypedFeatureResult | list[TypedFeatureResult]:
         return self._client._latest_entity(
-            self.tenant, self.entity_type, self.entity_id, feature_id, count
+            self.namespace, self._client.entity_type, self.entity_name, feature_id, count
         )
 
     def latest_double(self, feature_id: str) -> FeatureResult:
         return self._client._latest_double_entity(
-            self.tenant, self.entity_type, self.entity_id, feature_id
+            self.namespace, self._client.entity_type, self.entity_name, feature_id
         )
 
     def get(self) -> dict[str, TypedFeatureResult]:
-        return self._client._get_entity(self.tenant, self.entity_type, self.entity_id)
+        return self._client._get_entity(self.namespace, self._client.entity_type, self.entity_name)
 
-    def asof(
+    def get_range(
         self,
         feature_id: str,
-        event_cutoff_us: TimePointOrRange,
-        system_cutoff_us: TimePointOrRange | None = None,
-    ) -> TypedFeatureResult:
-        return self._client._asof_entity(
-            self.tenant,
-            self.entity_type,
-            self.entity_id,
+        date_range: RangeLike,
+        disk: bool = True,
+    ) -> list[TypedFeatureResult]:
+        return self._client._get_range_entity(
+            self.namespace,
+            self._client.entity_type,
+            self.entity_name,
             feature_id,
-            event_cutoff_us,
-            system_cutoff_us,
-        )
-
-    def asof_double(
-        self,
-        feature_id: str,
-        event_cutoff_us: TimePointOrRange,
-        system_cutoff_us: TimePointOrRange | None = None,
-    ) -> FeatureResult:
-        return self._client._asof_double_entity(
-            self.tenant,
-            self.entity_type,
-            self.entity_id,
-            feature_id,
-            event_cutoff_us,
-            system_cutoff_us,
+            date_range,
+            disk,
         )
 
 
@@ -155,28 +127,45 @@ class MXDBClient:
     ) -> None:
         self.config_path = str(config_path)
         self.featurectl_bin = resolve_featurectl_binary(featurectl_bin)
+        self._entity_type = "entity"
+
+    @property
+    def entity_type(self) -> str:
+        return self._entity_type
 
     def register_feature(
         self,
-        tenant: str,
-        entity_type: str,
-        feature_id: str,
+        namespace: str,
         feature_name: str,
         value_type: str = "double",
     ) -> None:
         self._run(
             [
                 "register-feature",
-                tenant,
-                entity_type,
-                feature_id,
+                namespace,
+                self.entity_type,
+                feature_name,
                 feature_name,
                 value_type,
             ]
         )
 
-    def entity(self, tenant: str, entity_type: str, entity_id: str) -> MXDBEntityClient:
-        return MXDBEntityClient(self, tenant, entity_type, entity_id)
+    def entity(self, namespace: str, entity_name: str) -> MXDBEntityClient:
+        return MXDBEntityClient(self, namespace, entity_name)
+
+    @staticmethod
+    def _new_write_id(
+        operation: str,
+        namespace: str,
+        entity_name: str,
+        feature_id: str,
+        event_time_us: int,
+    ) -> str:
+        nonce = uuid.uuid4().hex
+        return (
+            f"py-{operation}-{namespace}-{entity_name}-{feature_id}-"
+            f"{event_time_us}-{nonce}"
+        )
 
     def _ingest_entity(
         self,
@@ -258,83 +247,26 @@ class MXDBClient:
         out = self._run(["get", tenant, entity_type, entity_id])
         return self._parse_typed_feature_result_map(out)
 
-    def _asof_entity(
+    def _get_range_entity(
         self,
         tenant: str,
         entity_type: str,
         entity_id: str,
         feature_id: str,
-        event_cutoff_us: TimePointOrRange,
-        system_cutoff_us: TimePointOrRange | None = None,
-    ) -> TypedFeatureResult:
-        event_range_start, event_cutoff = self._normalize_time_range(event_cutoff_us)
-        if system_cutoff_us is None:
-            system_range_start = None
-            system_cutoff = int(time.time() * 1_000_000)
-        else:
-            system_range_start, system_cutoff = self._normalize_time_range(
-                system_cutoff_us
-            )
-        out = self._run(
-            [
-                "asof",
-                tenant,
-                entity_type,
-                entity_id,
-                feature_id,
-                str(event_cutoff),
-                str(system_cutoff),
-            ]
-        )
-        result = self._parse_typed_feature_result(out)
-        if not result.found:
-            return result
+        date_range: RangeLike,
+        disk: bool = True,
+    ) -> list[TypedFeatureResult]:
+        latest, furthest = self._normalize_latest_furthest_range(date_range)
+        if not isinstance(disk, bool):
+            raise TypeError("disk must be a bool")
 
-        if (
-            event_range_start is not None
-            and result.event_time_us is not None
-            and result.event_time_us < event_range_start
-        ):
-            return TypedFeatureResult(False, None, None, None, None, None)
+        args = ["range", tenant, entity_type, entity_id, feature_id, str(furthest)]
+        if latest is not None:
+            args.append(str(latest))
+        args.append("disk" if disk else "memory")
 
-        if (
-            system_range_start is not None
-            and result.system_time_us is not None
-            and result.system_time_us < system_range_start
-        ):
-            return TypedFeatureResult(False, None, None, None, None, None)
-
-        return result
-
-    def _asof_double_entity(
-        self,
-        tenant: str,
-        entity_type: str,
-        entity_id: str,
-        feature_id: str,
-        event_cutoff_us: TimePointOrRange,
-        system_cutoff_us: TimePointOrRange | None = None,
-    ) -> FeatureResult:
-        typed = self._asof_entity(
-            tenant=tenant,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            feature_id=feature_id,
-            event_cutoff_us=event_cutoff_us,
-            system_cutoff_us=system_cutoff_us,
-        )
-        if not typed.found:
-            return FeatureResult(False, None, None, None)
-        if typed.value_type != "double":
-            raise TypeError(
-                f"feature type is {typed.value_type}, expected double for asof_double"
-            )
-        return FeatureResult(
-            True,
-            float(typed.value),
-            typed.event_time_us,
-            typed.system_time_us,
-        )
+        out = self._run(args)
+        return self._parse_typed_feature_result_list(out)
 
     def checkpoint(self) -> None:
         self._run(["checkpoint"])
@@ -510,15 +442,19 @@ class MXDBClient:
         raise TypeError("time value must be int, float, str, or datetime")
 
     @classmethod
-    def _normalize_time_range(cls, value: TimePointOrRange) -> tuple[int | None, int]:
+    def _normalize_latest_furthest_range(
+        cls, value: RangeLike
+    ) -> tuple[int | None, int]:
         if isinstance(value, (tuple, list)):
             if len(value) != 2:
-                raise ValueError("time range must have exactly two values: (start, end)")
-
-            start = cls._normalize_time_us(value[0])
-            end = cls._normalize_time_us(value[1])
-            if start > end:
-                raise ValueError("time range start must be <= end")
-            return start, end
+                raise ValueError(
+                    "date_range must be either a single value (furthest) or "
+                    "(latest, furthest)"
+                )
+            latest = cls._normalize_time_us(value[0])
+            furthest = cls._normalize_time_us(value[1])
+            if latest < furthest:
+                raise ValueError("latest must be >= furthest")
+            return latest, furthest
 
         return None, cls._normalize_time_us(value)

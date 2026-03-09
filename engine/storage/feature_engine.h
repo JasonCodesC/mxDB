@@ -58,6 +58,13 @@ class FeatureEngine {
       std::optional<Lsn> min_visible_lsn = std::nullopt) const;
   StatusOr<std::vector<FeatureEvent>> GetLatestEvents(
       const EntityKey& entity, const std::string& feature_id, size_t limit,
+      bool include_disk = true,
+      std::optional<Lsn> min_visible_lsn = std::nullopt) const;
+  StatusOr<std::vector<FeatureEvent>> GetRangeEvents(
+      const EntityKey& entity, const std::string& feature_id,
+      TimestampMicros furthest_event_time_us,
+      std::optional<TimestampMicros> latest_event_time_us = std::nullopt,
+      bool include_disk = true,
       std::optional<Lsn> min_visible_lsn = std::nullopt) const;
 
   StatusOr<AsOfLookupResult> AsOfLookup(const AsOfLookupInput& input) const;

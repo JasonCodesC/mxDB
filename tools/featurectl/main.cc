@@ -41,6 +41,7 @@ void PrintUsage() {
       << "  ingest <tenant> <entity_type> <entity_id> <feature_id> <event_us> <system_us|auto> <value> <write_id> [upsert|delete]\n"
       << "  get <tenant> <entity_type> <entity_id>\n"
       << "  latest <tenant> <entity_type> <entity_id> <feature_id> [count]\n"
+      << "  range <tenant> <entity_type> <entity_id> <feature_id> <furthest_event_us> [latest_event_us] [disk|memory]\n"
       << "  asof <tenant> <entity_type> <entity_id> <feature_id> <event_cutoff_us> <system_cutoff_us>\n";
 }
 
@@ -664,6 +665,80 @@ int main(int argc, char** argv) {
                   << " event_time_us=" << feature.event_time_us
                   << " system_time_us=" << feature.system_time_us << "\n";
       }
+    }
+  } else if (command == "range") {
+    if (argc < 8) {
+      PrintUsage();
+      return 1;
+    }
+
+    mxdb::TimestampMicros furthest_event_us = 0;
+    try {
+      furthest_event_us = std::stoll(argv[7]);
+    } catch (const std::exception&) {
+      status = mxdb::Status::InvalidArgument(
+          "furthest_event_us must be a valid integer timestamp");
+      goto done;
+    }
+
+    std::optional<mxdb::TimestampMicros> latest_event_us = std::nullopt;
+    bool include_disk = true;
+
+    auto parse_source = [&](const std::string& token) -> mxdb::Status {
+      if (token == "disk") {
+        include_disk = true;
+        return mxdb::Status::Ok();
+      }
+      if (token == "memory" || token == "mem") {
+        include_disk = false;
+        return mxdb::Status::Ok();
+      }
+      return mxdb::Status::InvalidArgument(
+          "range source must be disk|memory");
+    };
+
+    if (argc >= 9) {
+      const std::string arg8 = argv[8];
+      if (arg8 == "disk" || arg8 == "memory" || arg8 == "mem") {
+        status = parse_source(arg8);
+        if (!status.ok()) {
+          goto done;
+        }
+      } else {
+        try {
+          latest_event_us = std::stoll(arg8);
+        } catch (const std::exception&) {
+          status = mxdb::Status::InvalidArgument(
+              "latest_event_us must be a valid integer timestamp");
+          goto done;
+        }
+      }
+    }
+
+    if (argc >= 10) {
+      status = parse_source(argv[9]);
+      if (!status.ok()) {
+        goto done;
+      }
+    }
+
+    auto range_events = engine.GetRangeEvents(
+        {.tenant_id = argv[3], .entity_type = argv[4], .entity_id = argv[5]},
+        argv[6], furthest_event_us, latest_event_us, include_disk);
+    if (!range_events.ok()) {
+      status = range_events.status();
+    } else if (range_events.value().empty()) {
+      std::cout << "found=0 count=0\n";
+    } else {
+      auto events_json = LatestEventsAsJson(range_events.value());
+      if (!events_json.ok()) {
+        status = events_json.status();
+        goto done;
+      }
+      const std::string values_b64 = Base64Encode(events_json.value());
+      std::cout << "found=1"
+                << " count=" << range_events.value().size()
+                << " values_b64=" << values_b64 << "\n";
     }
   } else {
     PrintUsage();

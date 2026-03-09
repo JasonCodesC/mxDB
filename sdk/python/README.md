@@ -2,12 +2,8 @@
 
 `mxdb` is a thin Python SDK that shells out to `featurectl`.
 
-For published wheels, `featurectl` is bundled inside the wheel and resolved automatically by `MXDBClient`.
-The wheel build pipeline targets macOS, Linux, and Windows.
-
-Public SDK usage is entity-scoped: bind an entity with
-`client.entity(tenant, entity_type, entity_id)` and call reads/writes on the
-returned `MXDBEntityClient`.
+For published wheels, `featurectl` is bundled inside the wheel and resolved
+automatically by `MXDBClient`.
 
 ## Install
 
@@ -15,90 +11,131 @@ returned `MXDBEntityClient`.
 pip install mxdb
 ```
 
-No local compiler/toolchain is required for standard wheel installs.
-Linux distributions are published with manylinux wheel tags (not raw
-`linux_x86_64`) so they are accepted by PyPI and install cleanly with pip.
+## API Shape
 
-## Basic Usage
+The public API is namespace + entity-centric:
+
+- `client.register_feature(namespace, feature_name, value_type)`
+- `row = client.entity(namespace, entity_name)`
+- `row.upsert(feature_id, event_time, value)`
+- `row.delete(feature_id, event_time)`
+- `row.latest(feature_id, count=...)`
+- `row.get()`
+- `row.get_range(feature_id, date_range, disk=True)`
+
+`system_time` and `write_id` are intentionally hidden in Python.
+
+## `get_range` Semantics
+
+`row.get_range(feature_id, date_range, disk=True)` returns a newest-first list of
+typed values for one feature.
+
+- `date_range=(latest, furthest)`:
+  returns values with `event_time` in `[furthest, latest]`
+- `date_range=furthest`:
+  returns everything after `furthest` (inclusive)
+- `disk=True`:
+  include values from memory + immutable segments
+- `disk=False`:
+  include only values currently in memory
+
+`date_range` accepts epoch micros, epoch seconds (`float`), `datetime`,
+`YYYY:MM:DD:HH:MM:SS[.ffffff]`, and ISO-8601 strings.
+
+## Full Example
 
 ```python
+from datetime import datetime, timezone, timedelta
+
 from mxdb import MXDBClient
 
 client = MXDBClient("featured.conf")
 
-client.register_feature("prod", "instrument", "f_price", "price", "double")
-client.register_feature("prod", "instrument", "f_vec", "vec", "double_vector")
+# 1) Register schema in namespace "quant"
+client.register_feature("quant", "f_price", "double")
+client.register_feature("quant", "f_flag", "bool")
+client.register_feature("quant", "f_note", "string")
+client.register_feature("quant", "f_vec", "double_vector")
 
-# Bind the entity once, then use short calls.
-aapl = client.entity("prod", "instrument", "AAPL")
+# 2) Bind one entity key (row/index)
+aapl = client.entity("quant", "AAPL")
 
-aapl.ingest("f_price", 100, 101.5, "w1", system_time_us=100)
-aapl.ingest("f_vec", 101, [1.0, 2.5, 3.25], "w2", system_time_us=101)
+# 3) Write values
+base = datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)
+aapl.upsert("f_price", base, 101.5)
+aapl.upsert("f_price", base + timedelta(seconds=5), 102.0)
+aapl.upsert("f_flag", base + timedelta(seconds=1), True)
+aapl.upsert("f_note", base + timedelta(seconds=2), 'quote " ok')
+aapl.upsert("f_vec", base + timedelta(seconds=3), [1.0, 2.5, 3.25])
 
-latest = aapl.latest("f_price")
-print(latest.value_type, latest.value)  # double 101.5
+# 4) Latest reads
+latest_price = aapl.latest("f_price")
+latest_price_history = aapl.latest("f_price", count=5)
+latest_price_typed = aapl.latest_double("f_price")
 
-latest_many = aapl.latest("f_price", count=5)
-print([x.value for x in latest_many])  # latest 5 (or fewer) values
-
+# 5) Get all registered features for this entity
 snapshot = aapl.get()
-print(snapshot["f_price"].value)  # 101.5
 
-asof = aapl.asof("f_vec", 200, 200)
-print(asof.value_type, asof.value)  # double_vector [1.0, 2.5, 3.25]
-
-# Range form: latest value within [start, end] (inclusive).
-asof_range = aapl.asof(
-    "f_price", ("2026:03:09:12:00:00.000", "2026:03:09:12:10:00.000")
+# 6) Range reads (latest->furthest)
+bounded = aapl.get_range(
+    "f_price",
+    ("2026:03:09:12:00:05.000", "2026:03:09:12:00:00.000"),
 )
-print(asof_range.value)
+# latest omitted => everything after furthest
+open_ended = aapl.get_range("f_price", "2026:03:09:12:00:00")
+# memory-only view
+memory_only = aapl.get_range("f_price", (base + timedelta(seconds=10), base), disk=False)
 
-aapl.delete("f_price", 300, "w-delete-1", system_time_us=300)
+# 7) Delete latest value (tombstone)
+aapl.delete("f_price", base + timedelta(seconds=10))
+after_delete_latest = aapl.latest("f_price")         # found=False
+after_delete_history = aapl.latest("f_price", 5)     # []
+
+print(latest_price)
+print(latest_price_history)
+print(latest_price_typed)
+print(snapshot)
+print(bounded)
+print(open_ended)
+print(memory_only)
+print(after_delete_latest)
+print(after_delete_history)
 ```
 
-## Supported Python Value Types
+## Value Types
 
-`MXDBEntityClient.ingest()` accepts:
+`row.upsert(...)` accepts:
 
 - `bool` -> `bool`
 - `int` -> `int64`
 - `float` -> `double`
 - `str` -> `string`
-- `list[float]` -> `float_vector` / `double_vector` (depending on registered metadata type)
+- `list[float]` -> `float_vector` / `double_vector` (based on feature metadata)
 
-Read APIs:
+## Return Types
 
-- `client.entity(tenant, entity_type, entity_id)` returns an entity-scoped client
-- `entity.latest(..., count=1)` returns one typed result
-- `entity.latest(..., count=N)` with `N > 1` returns up to `N` typed results
-- `entity.get()` returns all registered features for that entity key
-- `entity.asof(...)` returns one typed result
+`row.latest(..., count=1)` returns `TypedFeatureResult`.
+`row.latest(..., count>1)` and `row.get_range(...)` return
+`list[TypedFeatureResult]` in newest-first order.
+`row.get()` returns `dict[str, TypedFeatureResult]`.
 
-Double-only helpers remain available on the entity client: `entity.latest_double(...)` and `entity.asof_double(...)`.
-
-Write APIs:
-
-- `entity.ingest(..., operation="upsert"|"delete")`
-- `entity.delete(...)` convenience wrapper for tombstone writes
-
-## Return Objects
-
-`entity.latest()` and `entity.asof()` return `TypedFeatureResult` objects with:
+`TypedFeatureResult` fields:
 
 - `found: bool`
 - `value_type: str | None`
 - `value: Any | None`
 - `event_time_us: int | None`
 - `system_time_us: int | None`
-- `lsn: int | None` (`latest()` paths include `lsn`; `asof()` is `None`)
+- `lsn: int | None`
 
-When `count > 1`, `entity.latest()` returns `list[TypedFeatureResult]` in newest-first order.
-`entity.get()` returns `dict[str, TypedFeatureResult]` keyed by `feature_id`.
+## Client Methods
 
-Delete/latest contract:
+`MXDBClient` also exposes:
 
-- if the latest visible event is a tombstone, `entity.latest(..., count=1)` returns `found=False`
-- `entity.latest(..., count>1)` returns `[]` when the latest visible event is a tombstone
+- `checkpoint()`
+- `compact()`
+- `set_read_only(enabled: bool)`
+- `backup(destination_dir: str)`
 
 ## Binary Resolution Order
 
@@ -110,35 +147,3 @@ Delete/latest contract:
 4. `featurectl` on `PATH`
 
 If none are found, construction fails with a clear error.
-
-## `asof` Time Inputs
-
-`event_cutoff_us` / `system_cutoff_us` accept:
-
-- epoch microseconds (`int`)
-- `datetime` objects
-- strings in `YYYY:MM:DD:HH:MM:SS[.ffffff]`
-- ISO-8601 strings (for example `2026-03-09T12:34:56Z`)
-- ranges as `(start, end)` or `[start, end]` using any supported time input
-  above
-
-`system_cutoff_us` is optional; if omitted, it defaults to current time.
-For range inputs, `entity.asof(...)` returns the latest visible value in the closed interval.
-Millisecond strings work via fractional seconds (for example `.123`).
-
-## Building Wheels With Bundled `featurectl`
-
-```bash
-python sdk/python/scripts/build_featurectl_for_wheel.py
-cd sdk/python
-python -m build
-```
-
-For source builds on Windows, install SQLite via vcpkg and pass the toolchain:
-
-```powershell
-python sdk/python/scripts/install_windows_sqlite.py
-$env:MXDB_CMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
-$env:MXDB_VCPKG_TARGET_TRIPLET="x64-windows"
-python sdk/python/scripts/build_featurectl_for_wheel.py
-```
