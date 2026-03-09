@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <iterator>
@@ -23,6 +24,66 @@ namespace {
 
 constexpr const char* kDefaultEntityType = "entity";
 
+class DataDirProcessLock {
+ public:
+  DataDirProcessLock() = default;
+  ~DataDirProcessLock() { Release(); }
+
+  DataDirProcessLock(const DataDirProcessLock&) = delete;
+  DataDirProcessLock& operator=(const DataDirProcessLock&) = delete;
+  DataDirProcessLock(DataDirProcessLock&& other) noexcept
+      : lock_path_(std::move(other.lock_path_)), held_(other.held_) {
+    other.held_ = false;
+  }
+  DataDirProcessLock& operator=(DataDirProcessLock&& other) noexcept {
+    if (this != &other) {
+      Release();
+      lock_path_ = std::move(other.lock_path_);
+      held_ = other.held_;
+      other.held_ = false;
+    }
+    return *this;
+  }
+
+  static mxdb::StatusOr<DataDirProcessLock> Acquire(
+      const std::string& data_dir) {
+    DataDirProcessLock lock;
+    std::error_code ec;
+    const std::filesystem::path root(data_dir);
+    std::filesystem::create_directories(root, ec);
+    if (ec) {
+      return mxdb::Status::Internal("failed to create data_dir for process lock: " +
+                                    ec.message());
+    }
+
+    lock.lock_path_ = root / ".featurectl.process.lock";
+    const bool created = std::filesystem::create_directory(lock.lock_path_, ec);
+    if (ec) {
+      return mxdb::Status::Internal("failed to create process lock: " +
+                                    ec.message());
+    }
+    if (!created) {
+      return mxdb::Status::FailedPrecondition(
+          "another featurectl command is already using this data_dir");
+    }
+    lock.held_ = true;
+    return lock;
+  }
+
+ private:
+  void Release() {
+    if (!held_) {
+      return;
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(lock_path_, ec);
+    held_ = false;
+  }
+
+  std::filesystem::path lock_path_;
+  bool held_ = false;
+};
+
 mxdb::TimestampMicros NowMicros() {
   const auto now = std::chrono::system_clock::now();
   return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -41,8 +102,8 @@ void PrintUsage() {
       << "  backup <destination_dir>\n"
       << "  restore <source_dir> [readonly]\n"
       << "  register <namespace> <feature_name> <value_type>\n"
-      << "  upsert <namespace> <entity_name> <feature_id> <event_us> <value>\n"
-      << "  delete <namespace> <entity_name> <feature_id> <event_us>\n"
+      << "  upsert <namespace> <entity_name> <feature_id> <event_us> <value> [write_id]\n"
+      << "  delete <namespace> <entity_name> <feature_id> <event_us> [write_id]\n"
       << "  get <namespace> <entity_name>\n"
       << "  latest <namespace> <entity_name> <feature_id> [count]\n"
       << "  range <namespace> <entity_name> <feature_id> <furthest_event_us> [latest_event_us] [disk|memory]\n";
@@ -380,8 +441,7 @@ mxdb::StatusOr<std::string> LatestSnapshotAsJson(
         << "\""
         << ",\"value\":" << value_json.value()
         << ",\"event_time_us\":" << feature.event_time_us
-        << ",\"system_time_us\":" << feature.system_time_us << ",\"lsn\":"
-        << latest.visible_commit.lsn << "}";
+        << ",\"system_time_us\":" << feature.system_time_us << "}";
   }
   out << "]";
   return out.str();
@@ -403,6 +463,11 @@ int main(int argc, char** argv) {
   }
 
   mxdb::EngineConfig config = mxdb::ConfigLoader::LoadFromFile(config_path);
+  auto process_lock = DataDirProcessLock::Acquire(config.data_dir);
+  if (!process_lock.ok()) {
+    std::cerr << "process lock failed: " << process_lock.status().message() << "\n";
+    return 1;
+  }
 
   mxdb::MetadataStore metadata;
   mxdb::Status status = metadata.Open(config.metadata_path);
@@ -445,6 +510,10 @@ int main(int argc, char** argv) {
       return 1;
     }
     const std::string mode = argv[3];
+    if (mode != "on" && mode != "off") {
+      status = mxdb::Status::InvalidArgument("readonly mode must be 'on' or 'off'");
+      goto done;
+    }
     status = admin.SetReadOnlyMode(mode == "on");
   } else if (command == "backup") {
     if (argc < 4) {
@@ -488,7 +557,7 @@ int main(int argc, char** argv) {
 
     status = metadata.CreateFeature(feature);
   } else if (command == "upsert") {
-    if (argc < 8) {
+    if (argc < 8 || argc > 9) {
       PrintUsage();
       return 1;
     }
@@ -518,8 +587,12 @@ int main(int argc, char** argv) {
     event.event_time_us = event_time_us.value();
     event.value = parsed_value.value();
     event.operation = mxdb::OperationType::kUpsert;
-    event.write_id =
-        BuildAutoWriteId("upsert", argv[3], argv[4], argv[5], event.event_time_us);
+    if (argc == 9) {
+      event.write_id = argv[8];
+    } else {
+      event.write_id =
+          BuildAutoWriteId("upsert", argv[3], argv[4], argv[5], event.event_time_us);
+    }
     event.source_id = "featurectl";
     batch.events.push_back(std::move(event));
 
@@ -532,7 +605,7 @@ int main(int argc, char** argv) {
                 << " lsn=" << result.value().commit.lsn << "\n";
     }
   } else if (command == "delete") {
-    if (argc < 7) {
+    if (argc < 7 || argc > 8) {
       PrintUsage();
       return 1;
     }
@@ -561,8 +634,12 @@ int main(int argc, char** argv) {
     event.event_time_us = event_time_us.value();
     event.value = std::move(tombstone);
     event.operation = mxdb::OperationType::kDelete;
-    event.write_id =
-        BuildAutoWriteId("delete", argv[3], argv[4], argv[5], event.event_time_us);
+    if (argc == 8) {
+      event.write_id = argv[7];
+    } else {
+      event.write_id =
+          BuildAutoWriteId("delete", argv[3], argv[4], argv[5], event.event_time_us);
+    }
     event.source_id = "featurectl";
     batch.events.push_back(std::move(event));
 

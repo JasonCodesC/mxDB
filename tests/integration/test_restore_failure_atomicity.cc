@@ -119,6 +119,28 @@ int main() {
   assert(w3.ok());
   assert(ReadLatestPrice(&engine) == 30.0);
 
+  // Close-failure rollback path should preserve pre-restore mode and liveness.
+  status = admin.StartBackup(backup_dir.string());
+  assert(status.ok());
+  assert(!engine.IsReadOnly());
+
+  metadata.InjectCloseFailureForTest(1);
+  status = admin.RestoreBackup(backup_dir.string(), /*start_read_only=*/false);
+  assert(!status.ok());
+  assert(!engine.IsReadOnly());
+
+  auto w4 = engine.WriteEntityBatch(MakeEvent("w4", 40.0, 400, 400),
+                                    mxdb::DurabilityMode::kSync, true);
+  assert(w4.ok());
+  assert(ReadLatestPrice(&engine) == 40.0);
+
+  // If rollback restart also fails, returned error must surface restart failure.
+  metadata.InjectCloseFailureForTest(1);
+  engine.InjectStartFailureForTest(1);
+  status = admin.RestoreBackup(backup_dir.string(), /*start_read_only=*/false);
+  assert(!status.ok());
+  assert(status.message().find("rollback restart failed") != std::string::npos);
+
   status = engine.Stop();
   assert(status.ok());
   status = metadata.Close();

@@ -66,7 +66,7 @@ Main implementation modules:
 
 - engine core: `engine/`
 - process binaries: `server/process/`, `tools/featurectl/`
-- contracts: `proto/`
+- planned RPC schemas: `proto/` (not current v1 runtime API)
 - Python SDK: `sdk/python/`
 
 ## Install
@@ -111,6 +111,8 @@ build/featurectl featured.conf register prod f_note string
 build/featurectl featured.conf upsert prod AAPL f_price 100 101.5
 build/featurectl featured.conf upsert prod AAPL f_flag 101 true
 build/featurectl featured.conf upsert prod AAPL f_note 102 "opening print"
+# optional stable write_id for retry-safe idempotency
+build/featurectl featured.conf upsert prod AAPL f_price 100 101.5 price-100-v1
 build/featurectl featured.conf delete prod AAPL f_price 103
 ```
 
@@ -198,6 +200,8 @@ Public write API is simplified:
 - `entity.delete(feature_id, event_time)`
 
 `system_time` and `write_id` are hidden in Python and generated automatically.
+For idempotent retries, pass an explicit stable `write_id`:
+`entity.upsert(..., write_id="order-123-v1")`.
 
 Return shapes:
 

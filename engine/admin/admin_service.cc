@@ -7,6 +7,43 @@
 
 namespace mxdb {
 
+namespace {
+
+StatusOr<std::filesystem::path> NormalizePathForComparison(
+    const std::filesystem::path& raw) {
+  std::error_code ec;
+  if (std::filesystem::exists(raw, ec)) {
+    auto canonical = std::filesystem::canonical(raw, ec);
+    if (ec) {
+      return Status::Internal("failed to resolve path: " + ec.message());
+    }
+    return canonical.lexically_normal();
+  }
+
+  const std::filesystem::path parent = raw.parent_path();
+  const std::filesystem::path leaf = raw.filename();
+  const std::filesystem::path canonical_parent =
+      parent.empty() ? std::filesystem::current_path() : std::filesystem::weakly_canonical(parent, ec);
+  if (ec) {
+    return Status::Internal("failed to resolve path parent: " + ec.message());
+  }
+  return (canonical_parent / leaf).lexically_normal();
+}
+
+bool IsSameOrDescendantPath(const std::filesystem::path& path,
+                            const std::filesystem::path& maybe_parent) {
+  auto path_it = path.begin();
+  auto parent_it = maybe_parent.begin();
+  for (; parent_it != maybe_parent.end(); ++parent_it, ++path_it) {
+    if (path_it == path.end() || *path_it != *parent_it) {
+      return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
 HealthStatus AdminService::GetHealth() const {
   HealthStatus health;
   health.current_lsn = engine_->CurrentLsn();
@@ -49,6 +86,33 @@ void AdminService::InjectRestoreFailureAfterSwapForTest() {
 }
 
 Status AdminService::StartBackup(const std::string& destination_dir) {
+  const std::filesystem::path live_data = config_->data_dir;
+  const std::filesystem::path destination_root = destination_dir;
+  const std::filesystem::path data_backup_dir = destination_root / "data";
+  const std::filesystem::path data_backup_staging =
+      destination_root / ("data" + TempPathSuffix("backup-staging"));
+
+  auto live_norm = NormalizePathForComparison(live_data);
+  if (!live_norm.ok()) {
+    return live_norm.status();
+  }
+  auto backup_norm = NormalizePathForComparison(data_backup_dir);
+  if (!backup_norm.ok()) {
+    return backup_norm.status();
+  }
+  auto staging_norm = NormalizePathForComparison(data_backup_staging);
+  if (!staging_norm.ok()) {
+    return staging_norm.status();
+  }
+
+  if (IsSameOrDescendantPath(backup_norm.value(), live_norm.value()) ||
+      IsSameOrDescendantPath(staging_norm.value(), live_norm.value()) ||
+      IsSameOrDescendantPath(live_norm.value(), backup_norm.value()) ||
+      IsSameOrDescendantPath(live_norm.value(), staging_norm.value())) {
+    return Status::FailedPrecondition(
+        "backup destination must not overlap with live data_dir");
+  }
+
   const bool was_read_only = engine_->IsReadOnly();
   if (!was_read_only) {
     Status status = engine_->SetReadOnly(true);
@@ -74,13 +138,6 @@ Status AdminService::StartBackup(const std::string& destination_dir) {
     return Status::Internal("failed to create backup destination: " + ec.message());
   }
 
-  const std::string data_backup_dir =
-      (std::filesystem::path(destination_dir) / "data").string();
-  const std::string data_backup_staging =
-      (std::filesystem::path(destination_dir) /
-       ("data" + TempPathSuffix("backup-staging")))
-          .string();
-
   status = RemoveIfExists(data_backup_staging);
   if (!status.ok()) {
     if (!was_read_only) {
@@ -89,7 +146,8 @@ Status AdminService::StartBackup(const std::string& destination_dir) {
     return status;
   }
 
-  status = CopyPath(config_->data_dir, data_backup_staging, /*recursive=*/true);
+  status =
+      CopyPath(config_->data_dir, data_backup_staging.string(), /*recursive=*/true);
   if (status.ok()) {
     status = RemoveIfExists(data_backup_dir);
   }
@@ -147,9 +205,32 @@ Status AdminService::RestoreBackup(const std::string& source_dir,
 
   status = metadata_store_->Close();
   if (!status.ok()) {
-    (void)engine_->Start();
-    (void)engine_->SetReadOnly(true);
-    return status;
+    const Status close_failure = status;
+    Status restart_status = engine_->Start();
+    if (!restart_status.ok()) {
+      return Status::Internal(
+          "restore metadata close failed (" + close_failure.message() +
+          ") and rollback restart failed (" + restart_status.message() + ")");
+    }
+
+    RecoveryManager rollback_recovery(engine_);
+    bool rollback_truncated_tail = false;
+    Status recovery_status = rollback_recovery.RecoverFromWalDirectory(
+        config_->wal_dir, &rollback_truncated_tail);
+    if (!recovery_status.ok()) {
+      return Status::Internal(
+          "restore metadata close failed (" + close_failure.message() +
+          ") and rollback recovery failed (" + recovery_status.message() + ")");
+    }
+
+    Status restore_mode = engine_->SetReadOnly(was_read_only);
+    if (!restore_mode.ok()) {
+      return Status::Internal(
+          "restore metadata close failed (" + close_failure.message() +
+          ") and rollback read-only restore failed (" +
+          restore_mode.message() + ")");
+    }
+    return close_failure;
   }
   metadata_open = false;
 

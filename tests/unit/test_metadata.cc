@@ -55,6 +55,51 @@ int main() {
   status = validator.ValidateFeatureDefinition(f);
   assert(status.ok());
 
+  // Direct MetadataStore callers must be validated too.
+  {
+    mxdb::FeatureDefinition invalid = f;
+    invalid.feature_id = "f_bad_unspecified";
+    invalid.feature_name = "bad_unspecified";
+    invalid.value_type = mxdb::ValueType::kUnspecified;
+    status = store.CreateFeature(invalid);
+    assert(!status.ok());
+    assert(status.code() == mxdb::StatusCode::kInvalidArgument);
+  }
+  {
+    mxdb::FeatureDefinition invalid = f;
+    invalid.tenant_id = "";
+    invalid.feature_id = "f_bad_tenant";
+    invalid.feature_name = "bad_tenant";
+    status = store.CreateFeature(invalid);
+    assert(!status.ok());
+    assert(status.code() == mxdb::StatusCode::kInvalidArgument);
+  }
+  {
+    mxdb::FeatureDefinition invalid = f;
+    invalid.feature_id = "";
+    invalid.feature_name = "bad_feature_id";
+    status = store.CreateFeature(invalid);
+    assert(!status.ok());
+    assert(status.code() == mxdb::StatusCode::kInvalidArgument);
+  }
+  {
+    mxdb::FeatureDefinition invalid = f;
+    invalid.feature_id = "f_bad_name";
+    invalid.feature_name = "";
+    status = store.CreateFeature(invalid);
+    assert(!status.ok());
+    assert(status.code() == mxdb::StatusCode::kInvalidArgument);
+  }
+  {
+    mxdb::FeatureDefinition invalid = f;
+    invalid.feature_id = "f_bad_entity";
+    invalid.feature_name = "bad_entity";
+    invalid.entity_type = "";
+    status = store.CreateFeature(invalid);
+    assert(!status.ok());
+    assert(status.code() == mxdb::StatusCode::kInvalidArgument);
+  }
+
   status = store.CreateFeature(f);
   assert(status.ok());
 
@@ -79,6 +124,26 @@ int main() {
   auto updated = store.GetFeatureById("prod", "f_price");
   assert(updated.ok());
   assert(updated.value().description == "instrument last trade");
+
+  mxdb::FeatureDefinition invalid_update = f;
+  invalid_update.feature_name = "";
+  invalid_update.updated_at_us = NowMicros();
+  status = store.UpdateFeature(invalid_update);
+  assert(!status.ok());
+  assert(status.code() == mxdb::StatusCode::kInvalidArgument);
+  auto unchanged_after_invalid_update = store.GetFeatureById("prod", "f_price");
+  assert(unchanged_after_invalid_update.ok());
+  assert(unchanged_after_invalid_update.value().description ==
+         "instrument last trade");
+
+  mxdb::FeatureDefinition other_entity_feature = f;
+  other_entity_feature.feature_id = "f_portfolio_price";
+  other_entity_feature.feature_name = "portfolio_price";
+  other_entity_feature.entity_type = "portfolio";
+  other_entity_feature.created_at_us = NowMicros();
+  other_entity_feature.updated_at_us = other_entity_feature.created_at_us;
+  status = store.CreateFeature(other_entity_feature);
+  assert(status.ok());
 
   mxdb::FeatureGroup group;
   group.tenant_id = "prod";
@@ -105,6 +170,15 @@ int main() {
   invalid_group.created_at_us = NowMicros();
   invalid_group.updated_at_us = invalid_group.created_at_us;
   status = store.CreateFeatureGroup(invalid_group);
+  assert(!status.ok());
+
+  mxdb::FeatureGroup mismatched_group = group;
+  mismatched_group.group_id = "g_mismatch";
+  mismatched_group.group_name = "mismatch";
+  mismatched_group.feature_ids = {"f_price", "f_portfolio_price"};
+  mismatched_group.created_at_us = NowMicros();
+  mismatched_group.updated_at_us = mismatched_group.created_at_us;
+  status = store.CreateFeatureGroup(mismatched_group);
   assert(!status.ok());
 
   status = store.Close();

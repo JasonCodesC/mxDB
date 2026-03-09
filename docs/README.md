@@ -18,7 +18,16 @@ This directory maps the specification, ADRs, API contracts, and execution plan f
 - Python SDK usage: [../sdk/python/README.md](../sdk/python/README.md)
 - Known limitations: [known-limitations.md](known-limitations.md)
 
-## Machine-Readable Contracts
+## Public API (Current v1)
+
+The current public runtime API is:
+
+- `featurectl` CLI (`tools/featurectl/main.cc`)
+- Python SDK (`sdk/python/`) that shells out to `featurectl`
+
+## Planned RPC Schemas (Not v1 Public API)
+
+`proto/` documents planned gRPC surfaces for later milestones:
 
 - [common.proto](../proto/common.proto)
 - [metadata.proto](../proto/metadata.proto)

@@ -44,6 +44,27 @@ mxdb::EntityFeatureBatch MakeEvent(const std::string& write_id, double value,
   return batch;
 }
 
+double ReadLatestPrice(mxdb::FeatureEngine* engine) {
+  auto latest = engine->GetLatest(
+      {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"},
+      {"f_price"});
+  assert(latest.ok());
+  assert(latest.value().features.size() == 1);
+  assert(latest.value().features[0].found);
+  return std::get<double>(latest.value().features[0].value.value);
+}
+
+void ExpectEngineStillLiveAfterBackupPathFailure(mxdb::FeatureEngine* engine,
+                                                 int write_suffix,
+                                                 double value) {
+  auto write = engine->WriteEntityBatch(
+      MakeEvent("live-" + std::to_string(write_suffix), value, 5000 + write_suffix,
+                5000 + write_suffix),
+      mxdb::DurabilityMode::kSync, true);
+  assert(write.ok());
+  assert(ReadLatestPrice(engine) == value);
+}
+
 }  // namespace
 
 int main() {
@@ -89,6 +110,23 @@ int main() {
   auto write = engine.WriteEntityBatch(MakeEvent("w1", 1.0, 100, 100),
                                        mxdb::DurabilityMode::kSync, true);
   assert(write.ok());
+
+  // Reject dangerous backup destinations that overlap the live data tree.
+  status = admin.StartBackup(tmp.string());  // parent(config.data_dir)
+  assert(!status.ok());
+  assert(std::filesystem::exists(config.data_dir));
+  ExpectEngineStillLiveAfterBackupPathFailure(&engine, 1, 1.1);
+
+  status = admin.StartBackup(config.data_dir);  // equal to live data dir
+  assert(!status.ok());
+  assert(std::filesystem::exists(config.data_dir));
+  ExpectEngineStillLiveAfterBackupPathFailure(&engine, 2, 1.2);
+
+  status = admin.StartBackup((std::filesystem::path(config.data_dir) / "backup-child")
+                                 .string());  // nested under live data dir
+  assert(!status.ok());
+  assert(std::filesystem::exists(config.data_dir));
+  ExpectEngineStillLiveAfterBackupPathFailure(&engine, 3, 1.3);
 
   // Slow backup copy enough to overlap concurrent write attempts.
   {

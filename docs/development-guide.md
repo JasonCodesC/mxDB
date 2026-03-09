@@ -10,7 +10,8 @@ Unless an ADR changes them, use these defaults:
 
 - language: C++20 for the core engine
 - build system: CMake
-- RPC: gRPC + protobuf
+- transport (v1): local `featurectl` CLI boundary
+- RPC (planned): gRPC + protobuf
 - metadata storage: SQLite
 - batch interchange: Arrow
 - Python packaging: modern `pyproject.toml` based packaging for the SDK
@@ -113,13 +114,14 @@ If those answers are unclear, the implementation is not ready.
 
 ## 10. API Discipline
 
-The `proto/` files are the machine-readable public contract.
+Current v1 public API contract is `featurectl` + Python SDK behavior.
+`proto/` definitions are planned contracts for a later gRPC milestone.
 
 Rules:
 
-- do not make ad hoc API changes in server code without updating the proto files
-- do not create hidden behavior that is absent from the contract docs
-- keep request semantics explicit, especially around time cutoffs and consistency
+- keep CLI and SDK behavior aligned with user-facing docs
+- do not create hidden behavior absent from the documented v1 contract
+- when promoting any proto surface to public, update docs/tests in the same change
 
 ## 11. Milestone Discipline
 

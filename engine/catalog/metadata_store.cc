@@ -76,6 +76,25 @@ FeatureDefinition ReadFeature(sqlite3_stmt* stmt) {
   return feature;
 }
 
+Status ValidateFeatureDefinitionShape(const FeatureDefinition& feature) {
+  if (feature.tenant_id.empty()) {
+    return Status::InvalidArgument("tenant_id is required");
+  }
+  if (feature.feature_id.empty()) {
+    return Status::InvalidArgument("feature_id is required");
+  }
+  if (feature.feature_name.empty()) {
+    return Status::InvalidArgument("feature_name is required");
+  }
+  if (feature.entity_type.empty()) {
+    return Status::InvalidArgument("entity_type is required");
+  }
+  if (feature.value_type == ValueType::kUnspecified) {
+    return Status::InvalidArgument("value_type is required");
+  }
+  return Status::Ok();
+}
+
 }  // namespace
 
 MetadataStore::~MetadataStore() { Close(); }
@@ -111,6 +130,10 @@ Status MetadataStore::Close() {
   if (db_ == nullptr) {
     return Status::Ok();
   }
+  if (fail_close_for_test_count_ > 0) {
+    --fail_close_for_test_count_;
+    return Status::Internal("injected metadata close failure");
+  }
 
   const int rc = sqlite3_close(db_);
   if (rc != SQLITE_OK) {
@@ -118,6 +141,10 @@ Status MetadataStore::Close() {
   }
   db_ = nullptr;
   return Status::Ok();
+}
+
+void MetadataStore::InjectCloseFailureForTest(size_t count) {
+  fail_close_for_test_count_ += count;
 }
 
 Status MetadataStore::RunMigrations() {
@@ -192,6 +219,10 @@ Status MetadataStore::CreateFeature(const FeatureDefinition& feature) {
   if (db_ == nullptr) {
     return Status::FailedPrecondition("metadata store not opened");
   }
+  Status validation = ValidateFeatureDefinitionForPersistence(feature);
+  if (!validation.ok()) {
+    return validation;
+  }
 
   Status status;
   auto stmt = Prepare(
@@ -243,6 +274,10 @@ Status MetadataStore::CreateFeature(const FeatureDefinition& feature) {
 Status MetadataStore::UpdateFeature(const FeatureDefinition& feature) {
   if (db_ == nullptr) {
     return Status::FailedPrecondition("metadata store not opened");
+  }
+  Status validation = ValidateFeatureDefinitionForPersistence(feature);
+  if (!validation.ok()) {
+    return validation;
   }
 
   Status status;
@@ -456,6 +491,17 @@ Status MetadataStore::CreateFeatureGroup(const FeatureGroup& group) {
   }
 
   for (const std::string& feature_id : group.feature_ids) {
+    auto feature = GetFeatureById(group.tenant_id, feature_id);
+    if (!feature.ok()) {
+      rollback();
+      return feature.status();
+    }
+    if (feature.value().entity_type != group.entity_type) {
+      rollback();
+      return Status::InvalidArgument(
+          "feature group member entity_type mismatch");
+    }
+
     sqlite3_reset(member_stmt.get());
     sqlite3_clear_bindings(member_stmt.get());
     sqlite3_bind_text(member_stmt.get(), 1, group.tenant_id.c_str(), -1,
@@ -572,6 +618,11 @@ std::vector<std::string> MetadataStore::DecodeTags(const std::string& tags) {
     }
   }
   return out;
+}
+
+Status MetadataStore::ValidateFeatureDefinitionForPersistence(
+    const FeatureDefinition& feature) {
+  return ValidateFeatureDefinitionShape(feature);
 }
 
 std::string ToString(ValueType value_type) {

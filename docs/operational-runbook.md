@@ -17,9 +17,12 @@ build/featured featured.conf
 
 `featured` is a long-running process.
 
-For now, do not run `featurectl` commands against the same `data_dir` while a
-`featured` process is running. The v1 transport surface is CLI-based and there
-is no network API/multiprocess coordination layer yet.
+Do not run `featurectl` commands against the same `data_dir` while a
+`featured` process is running. The v1 transport surface is CLI-based, and there
+is still no shared network API/multiprocess coordination layer with `featured`.
+
+`featurectl` itself now enforces a per-`data_dir` process lock, so overlapping
+CLI/SDK commands are explicitly rejected instead of racing on-disk state.
 
 ## Health
 
@@ -36,6 +39,8 @@ build/featurectl featured.conf register prod f_note string
 build/featurectl featured.conf upsert prod AAPL f_price 100 101.5
 build/featurectl featured.conf upsert prod AAPL f_flag 101 true
 build/featurectl featured.conf upsert prod AAPL f_note 102 "opening print"
+# optional stable write_id for retry-safe idempotency
+build/featurectl featured.conf upsert prod AAPL f_price 100 101.5 price-100-v1
 build/featurectl featured.conf latest prod AAPL f_price
 build/featurectl featured.conf latest prod AAPL f_price 5
 build/featurectl featured.conf range prod AAPL f_price 100

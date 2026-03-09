@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+import uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,7 @@ class MXDBEntityClient:
         feature_id: str,
         event_time: TimeLike,
         value: Any,
+        write_id: Optional[str] = None,
     ) -> int:
         event_time_us = self._client._normalize_time_us(event_time)
         return self._client._upsert_entity(
@@ -53,12 +55,14 @@ class MXDBEntityClient:
             feature_id,
             event_time_us,
             value,
+            write_id,
         )
 
     def delete(
         self,
         feature_id: str,
         event_time: TimeLike,
+        write_id: Optional[str] = None,
     ) -> int:
         event_time_us = self._client._normalize_time_us(event_time)
         return self._client._delete_entity(
@@ -66,6 +70,7 @@ class MXDBEntityClient:
             self.entity_name,
             feature_id,
             event_time_us,
+            write_id,
         )
 
     def latest(
@@ -123,6 +128,20 @@ class MXDBClient:
     def entity(self, namespace: str, entity_name: str) -> MXDBEntityClient:
         return MXDBEntityClient(self, namespace, entity_name)
 
+    @staticmethod
+    def _new_write_id(
+        operation: str,
+        namespace: str,
+        entity_name: str,
+        feature_id: str,
+        event_time_us: int,
+    ) -> str:
+        nonce = uuid.uuid4().hex
+        return (
+            f"py-{operation}-{namespace}-{entity_name}-{feature_id}-"
+            f"{event_time_us}-{nonce}"
+        )
+
     def _upsert_entity(
         self,
         tenant: str,
@@ -130,7 +149,11 @@ class MXDBClient:
         feature_id: str,
         event_time_us: int,
         value: Any,
+        write_id: Optional[str] = None,
     ) -> int:
+        effective_write_id = write_id or self._new_write_id(
+            "upsert", tenant, entity_id, feature_id, event_time_us
+        )
         args = [
             "upsert",
             tenant,
@@ -138,6 +161,7 @@ class MXDBClient:
             feature_id,
             str(event_time_us),
             self._encode_value_literal(value),
+            effective_write_id,
         ]
         out = self._run(args)
         parts = self._parse_key_value_line(out)
@@ -149,9 +173,13 @@ class MXDBClient:
         entity_id: str,
         feature_id: str,
         event_time_us: int,
+        write_id: Optional[str] = None,
     ) -> int:
+        effective_write_id = write_id or self._new_write_id(
+            "delete", tenant, entity_id, feature_id, event_time_us
+        )
         out = self._run(
-            ["delete", tenant, entity_id, feature_id, str(event_time_us)]
+            ["delete", tenant, entity_id, feature_id, str(event_time_us), effective_write_id]
         )
         parts = self._parse_key_value_line(out)
         return int(parts.get("lsn", "0"))

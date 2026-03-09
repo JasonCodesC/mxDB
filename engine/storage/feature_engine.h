@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -52,6 +54,14 @@ class FeatureEngine {
   uint64_t ManifestVersion() const;
   size_t SegmentCount() const;
   void InjectFlushFailureForTest(size_t count = 1);
+  void InjectStartFailureForTest(size_t count = 1);
+  void InjectPauseAfterAdmissionForTest(size_t count = 1);
+  void InjectPauseAfterWalAppendForTest(size_t count = 1);
+  void InjectSkipApplyAfterWalAppendForTest(size_t count = 1);
+  bool WaitForPausedWritesForTest(size_t min_paused_writers,
+                                  uint64_t timeout_ms = 1000) const;
+  void ReleasePausedWritesForTest();
+  void ResetPausedWritesForTest();
 
   StatusOr<LatestQueryResult> GetLatest(
       const EntityKey& entity, const std::vector<std::string>& feature_ids,
@@ -106,6 +116,8 @@ class FeatureEngine {
   Status FlushPartitionLocked(size_t partition_id);
   Status LoadImmutableSegments();
   Status EnsureStartedForReadLocked() const;
+  void MaybePauseWriterForTest(std::atomic<size_t>* counter);
+  void NotifyWriteCompletedLocked();
 
   TimestampMicros NowMicros() const;
 
@@ -122,12 +134,26 @@ class FeatureEngine {
   std::unordered_set<std::string> inflight_write_ids_;
   CheckpointState checkpoint_state_;
   size_t fail_flush_for_test_count_ = 0;
+  size_t fail_start_for_test_count_ = 0;
   bool read_only_ = false;
   bool started_ = false;
+  size_t active_write_batches_ = 0;
+  uint64_t write_admission_epoch_ = 0;
+  std::condition_variable_any write_barrier_cv_;
 
   std::atomic<Lsn> next_lsn_{1};
+  std::atomic<Lsn> highest_applied_lsn_{0};
   std::atomic<uint64_t> next_sequence_no_{1};
   std::atomic<uint64_t> next_segment_id_{1};
+
+  // Test-only synchronization hooks for pausing write paths.
+  mutable std::mutex test_pause_mu_;
+  mutable std::condition_variable test_pause_cv_;
+  std::atomic<size_t> pause_after_admission_for_test_count_{0};
+  std::atomic<size_t> pause_after_wal_append_for_test_count_{0};
+  std::atomic<size_t> skip_apply_after_wal_append_for_test_count_{0};
+  size_t paused_writers_for_test_ = 0;
+  bool release_paused_writers_for_test_ = false;
 };
 
 }  // namespace mxdb

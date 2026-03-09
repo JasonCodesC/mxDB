@@ -1,9 +1,13 @@
 #include <cassert>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
+#include "engine/common/crc32/crc32.h"
 #include "engine/wal/wal_reader.h"
+#include "engine/wal/wal_record.h"
 #include "engine/wal/wal_writer.h"
 
 namespace {
@@ -33,58 +37,162 @@ std::filesystem::path FindWalFile(const std::filesystem::path& wal_dir) {
   return {};
 }
 
-}  // namespace
-
-int main() {
-  const auto tmp = UniqueTmpDir("wal");
-  const auto wal_dir = tmp / "wal";
-  std::filesystem::create_directories(wal_dir);
-
-  mxdb::WalWriter writer;
-  mxdb::Status status = writer.Open(wal_dir.string(), 1024 * 1024, 5, 4);
-  assert(status.ok());
-
+mxdb::Status AppendRecord(mxdb::WalWriter* writer, uint64_t lsn,
+                          const std::string& write_id, double value) {
   mxdb::FeatureEvent event;
-  event.entity = {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"};
+  event.entity = {
+      .tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"};
   event.feature_id = "f_price";
-  event.event_time_us = 100;
-  event.system_time_us = 150;
-  event.sequence_no = 1;
+  event.event_time_us = static_cast<mxdb::TimestampMicros>(100 + lsn);
+  event.system_time_us = static_cast<mxdb::TimestampMicros>(150 + lsn);
+  event.sequence_no = lsn;
   event.operation = mxdb::OperationType::kUpsert;
-  event.value = {.type = mxdb::ValueType::kDouble, .value = 10.5};
-  event.write_id = "w1";
+  event.value = {.type = mxdb::ValueType::kDouble, .value = value};
+  event.write_id = write_id;
   event.source_id = "unit";
-  event.lsn = 1;
+  event.lsn = lsn;
 
   mxdb::WalBatchPayload payload;
   payload.commit_system_time_us = NowMicros();
   payload.events = {event};
+  return writer->Append(lsn, payload, mxdb::DurabilityMode::kSync);
+}
 
-  status = writer.Append(1, payload, mxdb::DurabilityMode::kSync);
-  assert(status.ok());
+bool ReadHeader(std::fstream* file, mxdb::WalRecordHeader* header) {
+  file->read(reinterpret_cast<char*>(header), sizeof(*header));
+  return static_cast<size_t>(file->gcount()) == sizeof(*header);
+}
 
-  status = writer.Close();
-  assert(status.ok());
+void CorruptSecondRecordCrc(const std::filesystem::path& wal_file) {
+  std::fstream file(wal_file, std::ios::in | std::ios::out | std::ios::binary);
+  assert(file.is_open());
 
-  auto replay = mxdb::WalReader::ReadAll(wal_dir.string());
-  assert(replay.ok());
-  assert(!replay.value().had_truncated_tail);
-  assert(replay.value().records.size() == 1);
-  assert(replay.value().records[0].header.lsn == 1);
-  assert(replay.value().records[0].payload.events.size() == 1);
-  assert(replay.value().records[0].payload.events[0].feature_id == "f_price");
+  mxdb::WalRecordHeader first{};
+  assert(ReadHeader(&file, &first));
+  file.seekg(first.payload_length, std::ios::cur);
 
-  const auto wal_file = FindWalFile(wal_dir);
-  assert(!wal_file.empty());
-  const auto current_size = std::filesystem::file_size(wal_file);
-  assert(current_size > 10);
+  const std::streamoff second_header_pos = file.tellg();
+  mxdb::WalRecordHeader second{};
+  assert(ReadHeader(&file, &second));
+  const uint32_t bad_crc = second.crc32 ^ 0xFFFFFFFFU;
 
-  std::filesystem::resize_file(wal_file, current_size - 5);
-  auto replay_after_truncation = mxdb::WalReader::ReadAll(wal_dir.string());
-  assert(replay_after_truncation.ok());
-  assert(replay_after_truncation.value().had_truncated_tail);
-  assert(replay_after_truncation.value().records.empty());
+  file.seekp(second_header_pos +
+             static_cast<std::streamoff>(offsetof(mxdb::WalRecordHeader, crc32)));
+  file.write(reinterpret_cast<const char*>(&bad_crc), sizeof(bad_crc));
+  file.flush();
+}
 
-  std::filesystem::remove_all(tmp);
+void CorruptSecondRecordToParseFailure(const std::filesystem::path& wal_file) {
+  std::fstream file(wal_file, std::ios::in | std::ios::out | std::ios::binary);
+  assert(file.is_open());
+
+  mxdb::WalRecordHeader first{};
+  assert(ReadHeader(&file, &first));
+  file.seekg(first.payload_length, std::ios::cur);
+
+  const std::streamoff second_header_pos = file.tellg();
+  mxdb::WalRecordHeader second{};
+  assert(ReadHeader(&file, &second));
+
+  uint8_t first_payload_byte = 0;
+  file.read(reinterpret_cast<char*>(&first_payload_byte), 1);
+  assert(file.gcount() == 1);
+
+  const uint32_t tiny_payload_length = 1;
+  const uint32_t tiny_crc = mxdb::Crc32(&first_payload_byte, 1);
+  file.seekp(second_header_pos +
+             static_cast<std::streamoff>(
+                 offsetof(mxdb::WalRecordHeader, payload_length)));
+  file.write(reinterpret_cast<const char*>(&tiny_payload_length),
+             sizeof(tiny_payload_length));
+  file.write(reinterpret_cast<const char*>(&tiny_crc), sizeof(tiny_crc));
+  file.flush();
+}
+
+}  // namespace
+
+int main() {
+  // Tail truncation remains a recoverable condition.
+  {
+    const auto tmp = UniqueTmpDir("wal-truncate");
+    const auto wal_dir = tmp / "wal";
+    std::filesystem::create_directories(wal_dir);
+
+    mxdb::WalWriter writer;
+    mxdb::Status status =
+        writer.Open(wal_dir.string(), 1024 * 1024, 5, 4);
+    assert(status.ok());
+    status = AppendRecord(&writer, 1, "w1", 10.5);
+    assert(status.ok());
+    status = writer.Close();
+    assert(status.ok());
+
+    const auto wal_file = FindWalFile(wal_dir);
+    assert(!wal_file.empty());
+    const auto current_size = std::filesystem::file_size(wal_file);
+    assert(current_size > 10);
+    std::filesystem::resize_file(wal_file, current_size - 5);
+
+    auto replay = mxdb::WalReader::ReadAll(wal_dir.string());
+    assert(replay.ok());
+    assert(replay.value().had_truncated_tail);
+    assert(replay.value().records.empty());
+    std::filesystem::remove_all(tmp);
+  }
+
+  // Mid-log CRC corruption is a hard recovery error.
+  {
+    const auto tmp = UniqueTmpDir("wal-mid-crc");
+    const auto wal_dir = tmp / "wal";
+    std::filesystem::create_directories(wal_dir);
+
+    mxdb::WalWriter writer;
+    mxdb::Status status =
+        writer.Open(wal_dir.string(), 1024 * 1024, 5, 4);
+    assert(status.ok());
+    assert(AppendRecord(&writer, 1, "w1", 10.0).ok());
+    assert(AppendRecord(&writer, 2, "w2", 20.0).ok());
+    assert(AppendRecord(&writer, 3, "w3", 30.0).ok());
+    status = writer.Close();
+    assert(status.ok());
+
+    const auto wal_file = FindWalFile(wal_dir);
+    assert(!wal_file.empty());
+    CorruptSecondRecordCrc(wal_file);
+
+    auto replay = mxdb::WalReader::ReadAll(wal_dir.string());
+    assert(!replay.ok());
+    assert(replay.status().message().find("CRC mismatch") != std::string::npos);
+    std::filesystem::remove_all(tmp);
+  }
+
+  // Mid-log payload parse corruption is a hard recovery error.
+  {
+    const auto tmp = UniqueTmpDir("wal-mid-parse");
+    const auto wal_dir = tmp / "wal";
+    std::filesystem::create_directories(wal_dir);
+
+    mxdb::WalWriter writer;
+    mxdb::Status status =
+        writer.Open(wal_dir.string(), 1024 * 1024, 5, 4);
+    assert(status.ok());
+    assert(AppendRecord(&writer, 1, "w1", 10.0).ok());
+    assert(AppendRecord(&writer, 2, "w2", 20.0).ok());
+    assert(AppendRecord(&writer, 3, "w3", 30.0).ok());
+    status = writer.Close();
+    assert(status.ok());
+
+    const auto wal_file = FindWalFile(wal_dir);
+    assert(!wal_file.empty());
+    CorruptSecondRecordToParseFailure(wal_file);
+
+    auto replay = mxdb::WalReader::ReadAll(wal_dir.string());
+    assert(!replay.ok());
+    const std::string message = replay.status().message();
+    assert(message.find("parse") != std::string::npos ||
+           message.find("Parse") != std::string::npos);
+    std::filesystem::remove_all(tmp);
+  }
+
   return 0;
 }

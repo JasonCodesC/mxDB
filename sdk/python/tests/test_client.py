@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timezone
@@ -154,10 +155,13 @@ class MXDBClientTest(unittest.TestCase):
         self.assertTrue(snapshot["f_price"].found)
         self.assertEqual(snapshot["f_price"].value_type, "double")
         self.assertEqual(snapshot["f_price"].value, 101.5)
+        self.assertIsNone(snapshot["f_price"].lsn)
         self.assertTrue(snapshot["f_flag"].found)
         self.assertEqual(snapshot["f_flag"].value_type, "bool")
         self.assertTrue(snapshot["f_flag"].value)
+        self.assertIsNone(snapshot["f_flag"].lsn)
         self.assertFalse(snapshot["f_note"].found)
+        self.assertIsNone(snapshot["f_note"].lsn)
 
         missing_entity = self.client.entity("prod", "MSFT").get()
         self.assertEqual(set(missing_entity.keys()), {"f_price", "f_flag", "f_note"})
@@ -249,6 +253,62 @@ class MXDBClientTest(unittest.TestCase):
 
         history = aapl.get_range("f_price", (now + 3, now))
         self.assertEqual([x.value for x in history], [20.0, 10.0])
+
+    def test_stable_write_id_enables_retry_idempotency(self) -> None:
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+
+        aapl.upsert("f_price", now, 101.5, write_id="order-123-v1")
+        aapl.upsert("f_price", now + 1, 999.0, write_id="order-123-v1")
+
+        latest = aapl.latest("f_price")
+        self.assertTrue(latest.found)
+        self.assertEqual(latest.value, 101.5)
+
+    def test_process_lock_rejects_overlapping_featurectl_commands(self) -> None:
+        self.client.register_feature("prod", "f_price", "double")
+        aapl = self.client.entity("prod", "AAPL")
+        now = int(time.time() * 1_000_000)
+        aapl.upsert("f_price", now, 1.0)
+
+        # Inflate backup copy duration to force overlap with another command.
+        data_dir = self.tmp_path / "data"
+        filler = data_dir / "backup-load.bin"
+        filler.write_bytes(b"x" * (32 * 1024 * 1024))
+
+        backup_error: list[BaseException] = []
+
+        def run_backup() -> None:
+            try:
+                self.client.backup(str(self.tmp_path / "backup-lock"))
+            except BaseException as exc:  # noqa: BLE001
+                backup_error.append(exc)
+
+        backup_thread = threading.Thread(target=run_backup)
+        backup_thread.start()
+
+        saw_lock_conflict = False
+        attempt = 0
+        while backup_thread.is_alive() and attempt < 50:
+            attempt += 1
+            try:
+                aapl.upsert("f_price", now + 100 + attempt, 2.0 + attempt)
+            except RuntimeError as exc:
+                if "already using this data_dir" in str(exc):
+                    saw_lock_conflict = True
+                    break
+            time.sleep(0.01)
+
+        backup_thread.join()
+        if backup_error:
+            self.assertEqual(len(backup_error), 1)
+            self.assertIn("already using this data_dir", str(backup_error[0]))
+            saw_lock_conflict = True
+        self.assertTrue(
+            saw_lock_conflict,
+            "expected at least one overlapping featurectl command to be rejected",
+        )
 
     def test_resolves_binary_from_env(self) -> None:
         old = os.environ.get("MXDB_FEATURECTL_BIN")

@@ -94,14 +94,13 @@ StatusOr<WalReplayResult> WalReader::ReadAll(const std::string& wal_dir) {
 
       const uint32_t crc = Crc32(payload_bytes.data(), payload_bytes.size());
       if (crc != header.crc32) {
-        result.had_truncated_tail = true;
-        break;
+        return Status::Internal("WAL CRC mismatch in segment: " + path.string());
       }
 
       auto payload = ParseWalBatch(header.lsn, payload_bytes);
       if (!payload.ok()) {
-        result.had_truncated_tail = true;
-        break;
+        return Status::Internal("WAL parse failure in segment: " + path.string() +
+                                " (" + payload.status().message() + ")");
       }
 
       result.records.push_back(WalReadRecord{header, payload.value()});

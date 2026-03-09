@@ -34,6 +34,10 @@ FeatureEngine::FeatureEngine(const EngineConfig& config,
 Status FeatureEngine::Start() {
   {
     std::unique_lock<std::shared_mutex> lock(mu_);
+    if (fail_start_for_test_count_ > 0) {
+      --fail_start_for_test_count_;
+      return Status::Internal("injected start failure");
+    }
     if (started_) {
       return Status::FailedPrecondition("engine already started");
     }
@@ -95,9 +99,21 @@ Status FeatureEngine::Start() {
 }
 
 Status FeatureEngine::Stop() {
+  {
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    if (!started_) {
+      return Status::Ok();
+    }
+    // Block new admissions and let already-admitted writers drain.
+    started_ = false;
+    read_only_ = true;
+    ++write_admission_epoch_;
+    write_barrier_cv_.wait(lock,
+                           [&]() { return active_write_batches_ == 0; });
+  }
+
   Status status = wal_writer_.Close();
   std::unique_lock<std::shared_mutex> lock(mu_);
-  started_ = false;
   inflight_write_ids_.clear();
   return status;
 }
@@ -114,6 +130,7 @@ StatusOr<EntityCommitResult> FeatureEngine::WriteEntityBatch(
   new_events.reserve(batch.events.size());
   std::vector<std::string> reserved_write_ids;
   reserved_write_ids.reserve(batch.events.size());
+  uint64_t admission_epoch = 0;
 
   const TimestampMicros commit_system_time_us = NowMicros();
   {
@@ -125,12 +142,31 @@ StatusOr<EntityCommitResult> FeatureEngine::WriteEntityBatch(
       return Status::FailedPrecondition("engine is in read-only mode");
     }
 
+    // Batch atomicity contract:
+    // 1. duplicate write_ids within one batch are invalid
+    // 2. if any write_id is already seen/inflight, dedupe the whole batch
+    std::unordered_set<std::string> batch_write_ids;
     for (const auto& event_input : batch.events) {
-      if (IsWriteIdSeenLocked(event_input.write_id) ||
-          IsWriteIdInflightLocked(event_input.write_id)) {
-        continue;
+      if (!event_input.write_id.empty() &&
+          !batch_write_ids.insert(event_input.write_id).second) {
+        return Status::InvalidArgument("duplicate write_id within a single batch");
       }
+      if (!event_input.write_id.empty() &&
+          (IsWriteIdSeenLocked(event_input.write_id) ||
+           IsWriteIdInflightLocked(event_input.write_id))) {
+        EntityCommitResult deduped;
+        deduped.entity = batch.entity;
+        deduped.commit.lsn = CurrentLsn();
+        deduped.commit.commit_system_time_us = commit_system_time_us;
+        deduped.accepted_events = 0;
+        return deduped;
+      }
+    }
 
+    ++active_write_batches_;
+    admission_epoch = write_admission_epoch_;
+
+    for (const auto& event_input : batch.events) {
       if (!event_input.write_id.empty()) {
         MarkWriteIdInflightLocked(event_input.write_id);
         reserved_write_ids.push_back(event_input.write_id);
@@ -151,12 +187,26 @@ StatusOr<EntityCommitResult> FeatureEngine::WriteEntityBatch(
   }
 
   if (new_events.empty()) {
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    NotifyWriteCompletedLocked();
     EntityCommitResult deduped;
     deduped.entity = batch.entity;
     deduped.commit.lsn = CurrentLsn();
     deduped.commit.commit_system_time_us = commit_system_time_us;
     deduped.accepted_events = 0;
     return deduped;
+  }
+
+  MaybePauseWriterForTest(&pause_after_admission_for_test_count_);
+
+  {
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    if (!started_ || read_only_ || write_admission_epoch_ != admission_epoch) {
+      ReleaseWriteIdsInflightLocked(reserved_write_ids);
+      NotifyWriteCompletedLocked();
+      return Status::FailedPrecondition(
+          "write aborted due to engine mode transition");
+    }
   }
 
   const Lsn lsn = next_lsn_.fetch_add(1);
@@ -173,7 +223,22 @@ StatusOr<EntityCommitResult> FeatureEngine::WriteEntityBatch(
   if (!status.ok()) {
     std::unique_lock<std::shared_mutex> lock(mu_);
     ReleaseWriteIdsInflightLocked(reserved_write_ids);
+    NotifyWriteCompletedLocked();
     return status;
+  }
+
+  MaybePauseWriterForTest(&pause_after_wal_append_for_test_count_);
+
+  size_t skip_apply = skip_apply_after_wal_append_for_test_count_.load();
+  while (skip_apply > 0 &&
+         !skip_apply_after_wal_append_for_test_count_.compare_exchange_weak(
+             skip_apply, skip_apply - 1)) {
+  }
+  if (skip_apply > 0) {
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    ReleaseWriteIdsInflightLocked(reserved_write_ids);
+    NotifyWriteCompletedLocked();
+    return Status::Internal("injected skip apply after WAL append");
   }
 
   EntityCommitResult result;
@@ -186,6 +251,7 @@ StatusOr<EntityCommitResult> FeatureEngine::WriteEntityBatch(
   {
     std::unique_lock<std::shared_mutex> lock(mu_);
     ReleaseWriteIdsInflightLocked(reserved_write_ids);
+    NotifyWriteCompletedLocked();
   }
   if (!status.ok()) {
     // Contract: once WAL append succeeds, the write is treated as committed.
@@ -260,7 +326,7 @@ Status FeatureEngine::TriggerCheckpoint() {
   }
 
   const TimestampMicros now_us = NowMicros();
-  const uint64_t checkpoint_lsn = CurrentLsn();
+  const uint64_t checkpoint_lsn = highest_applied_lsn_.load();
   const uint64_t manifest_version = manifest_.LatestVersion();
   Status status = checkpoint_manager_.SaveCheckpoint(checkpoint_lsn,
                                                      manifest_version, now_us);
@@ -348,6 +414,12 @@ Status FeatureEngine::SetReadOnly(bool read_only) {
   }
 
   if (read_only) {
+    // Stop admitting new writes and wait for admitted writes to drain before flush.
+    read_only_ = true;
+    ++write_admission_epoch_;
+    write_barrier_cv_.wait(lock,
+                           [&]() { return active_write_batches_ == 0; });
+
     // Enter read-only with a flushed in-memory state so serving observes a stable
     // snapshot backed by immutable segments + latest cache.
     for (size_t partition_id = 0; partition_id < partitions_.size();
@@ -357,9 +429,11 @@ Status FeatureEngine::SetReadOnly(bool read_only) {
         return flush;
       }
     }
+    return Status::Ok();
   }
 
-  read_only_ = read_only;
+  read_only_ = false;
+  ++write_admission_epoch_;
   return Status::Ok();
 }
 
@@ -382,6 +456,47 @@ size_t FeatureEngine::SegmentCount() const {
 void FeatureEngine::InjectFlushFailureForTest(size_t count) {
   std::unique_lock<std::shared_mutex> lock(mu_);
   fail_flush_for_test_count_ += count;
+}
+
+void FeatureEngine::InjectStartFailureForTest(size_t count) {
+  std::unique_lock<std::shared_mutex> lock(mu_);
+  fail_start_for_test_count_ += count;
+}
+
+void FeatureEngine::InjectPauseAfterAdmissionForTest(size_t count) {
+  pause_after_admission_for_test_count_.fetch_add(count);
+}
+
+void FeatureEngine::InjectPauseAfterWalAppendForTest(size_t count) {
+  pause_after_wal_append_for_test_count_.fetch_add(count);
+}
+
+void FeatureEngine::InjectSkipApplyAfterWalAppendForTest(size_t count) {
+  skip_apply_after_wal_append_for_test_count_.fetch_add(count);
+}
+
+bool FeatureEngine::WaitForPausedWritesForTest(size_t min_paused_writers,
+                                               uint64_t timeout_ms) const {
+  std::unique_lock<std::mutex> lock(test_pause_mu_);
+  return test_pause_cv_.wait_for(
+      lock, std::chrono::milliseconds(timeout_ms), [&]() {
+        return paused_writers_for_test_ >= min_paused_writers;
+      });
+}
+
+void FeatureEngine::ReleasePausedWritesForTest() {
+  std::lock_guard<std::mutex> lock(test_pause_mu_);
+  release_paused_writers_for_test_ = true;
+  test_pause_cv_.notify_all();
+}
+
+void FeatureEngine::ResetPausedWritesForTest() {
+  std::lock_guard<std::mutex> lock(test_pause_mu_);
+  pause_after_admission_for_test_count_.store(0);
+  pause_after_wal_append_for_test_count_.store(0);
+  skip_apply_after_wal_append_for_test_count_.store(0);
+  paused_writers_for_test_ = 0;
+  release_paused_writers_for_test_ = false;
 }
 
 StatusOr<LatestQueryResult> FeatureEngine::GetLatest(
@@ -714,8 +829,10 @@ Status FeatureEngine::ApplyCommittedBatch(const std::vector<FeatureEvent>& event
                                           bool track_idempotency) {
   std::unique_lock<std::shared_mutex> lock(mu_);
   std::unordered_set<size_t> touched_partitions;
+  Lsn max_event_lsn = 0;
 
   for (const auto& event : events) {
+    max_event_lsn = std::max(max_event_lsn, event.lsn);
     if (track_idempotency && IsWriteIdSeenLocked(event.write_id)) {
       continue;
     }
@@ -749,6 +866,13 @@ Status FeatureEngine::ApplyCommittedBatch(const std::vector<FeatureEvent>& event
       if (!flush.ok()) {
         return flush;
       }
+    }
+  }
+
+  if (max_event_lsn > 0) {
+    Lsn applied = highest_applied_lsn_.load();
+    while (applied < max_event_lsn &&
+           !highest_applied_lsn_.compare_exchange_weak(applied, max_event_lsn)) {
     }
   }
 
@@ -809,6 +933,31 @@ void FeatureEngine::ReleaseWriteIdsInflightLocked(
   }
 }
 
+void FeatureEngine::MaybePauseWriterForTest(std::atomic<size_t>* counter) {
+  size_t current = counter->load();
+  while (current > 0 &&
+         !counter->compare_exchange_weak(current, current - 1)) {
+  }
+  if (current == 0) {
+    return;
+  }
+
+  std::unique_lock<std::mutex> lock(test_pause_mu_);
+  ++paused_writers_for_test_;
+  test_pause_cv_.notify_all();
+  test_pause_cv_.wait(
+      lock, [&]() { return release_paused_writers_for_test_; });
+  --paused_writers_for_test_;
+  test_pause_cv_.notify_all();
+}
+
+void FeatureEngine::NotifyWriteCompletedLocked() {
+  if (active_write_batches_ > 0) {
+    --active_write_batches_;
+  }
+  write_barrier_cv_.notify_all();
+}
+
 void FeatureEngine::ResetRuntimeStateLocked() {
   partitions_.clear();
   partitions_.resize(std::max<size_t>(1, config_.partition_count));
@@ -816,10 +965,23 @@ void FeatureEngine::ResetRuntimeStateLocked() {
   inflight_write_ids_.clear();
   checkpoint_state_ = CheckpointState{};
   fail_flush_for_test_count_ = 0;
+  active_write_batches_ = 0;
+  write_admission_epoch_ = 0;
+  read_only_ = false;
+  started_ = false;
 
   next_lsn_.store(1);
+  highest_applied_lsn_.store(0);
   next_sequence_no_.store(1);
   next_segment_id_.store(1);
+  pause_after_admission_for_test_count_.store(0);
+  pause_after_wal_append_for_test_count_.store(0);
+  skip_apply_after_wal_append_for_test_count_.store(0);
+  {
+    std::lock_guard<std::mutex> pause_lock(test_pause_mu_);
+    paused_writers_for_test_ = 0;
+    release_paused_writers_for_test_ = false;
+  }
 }
 
 Status FeatureEngine::FlushPartitionLocked(size_t partition_id) {
