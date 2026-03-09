@@ -58,8 +58,6 @@ void AssertLocalMarkdownLinksResolve(const std::filesystem::path& markdown_path)
 }  // namespace
 
 int main() {
-  assert(std::filesystem::exists("AGENT.md"));
-
   AssertLocalMarkdownLinksResolve("README.md");
   AssertLocalMarkdownLinksResolve("docs/README.md");
   AssertLocalMarkdownLinksResolve("CONTRIBUTING.md");
@@ -68,6 +66,10 @@ int main() {
   const std::string docs_index = ReadFile("docs/README.md");
   const std::string dev_guide = ReadFile("docs/development-guide.md");
   const std::string sdk_readme = ReadFile("sdk/python/README.md");
+
+  assert(root_readme.find("AGENT.md") == std::string::npos);
+  assert(docs_index.find("AGENT.md") == std::string::npos);
+  assert(ReadFile("CONTRIBUTING.md").find("AGENT.md") == std::string::npos);
 
   assert(docs_index.find("Public API (Current v1)") != std::string::npos);
   assert(docs_index.find("Planned RPC Schemas (Not v1 Public API)") !=

@@ -15,6 +15,6 @@ ctest --test-dir build --output-on-failure
 
 ## Development Rules
 
-- Follow `AGENT.md` authority order and milestone sequence.
+- Follow the milestone sequence in `docs/implementation-backlog.md`.
 - Keep docs and backlog updated with code changes.
 - Add tests with every subsystem-level change.

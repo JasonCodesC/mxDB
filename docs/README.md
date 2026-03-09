@@ -4,7 +4,6 @@ This directory maps the specification, ADRs, API contracts, and execution plan f
 
 ## Core Documents
 
-- Project execution charter: [AGENT.md](../AGENT.md)
 - Full system spec: [bitemporal-feature-engine-spec.md](bitemporal-feature-engine-spec.md)
 - HTML rendering of the spec: [bitemporal-feature-engine-spec.html](bitemporal-feature-engine-spec.html)
 - API contract: [bitemporal-feature-engine-api-contracts.md](bitemporal-feature-engine-api-contracts.md)

@@ -21,7 +21,8 @@
 - durable ingest with WAL + deterministic replay
 - operational controls (checkpoint, compaction, backup/restore)
 
-This project follows the architecture and milestone rules in [AGENT.md](AGENT.md), with detailed design in [docs/](docs/README.md).
+This project follows the architecture and milestone plan documented in
+[docs/](docs/README.md).
 
 ## Why It Exists
 
@@ -303,7 +304,6 @@ PYTHONPATH=sdk/python/src python3 tools/benchmark_runner.py \
 ## Documentation Index
 
 - architecture index: [docs/README.md](docs/README.md)
-- execution charter: [AGENT.md](AGENT.md)
 - system spec: [docs/bitemporal-feature-engine-spec.md](docs/bitemporal-feature-engine-spec.md)
 - API contracts: [docs/bitemporal-feature-engine-api-contracts.md](docs/bitemporal-feature-engine-api-contracts.md)
 - implementation backlog: [docs/implementation-backlog.md](docs/implementation-backlog.md)
