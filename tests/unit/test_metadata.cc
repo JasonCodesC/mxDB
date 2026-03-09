@@ -98,6 +98,15 @@ int main() {
   assert(loaded_group.value().feature_ids.size() == 1);
   assert(loaded_group.value().feature_ids[0] == "f_price");
 
+  mxdb::FeatureGroup invalid_group = group;
+  invalid_group.group_id = "g_invalid";
+  invalid_group.group_name = "invalid";
+  invalid_group.feature_ids = {"missing_feature"};
+  invalid_group.created_at_us = NowMicros();
+  invalid_group.updated_at_us = invalid_group.created_at_us;
+  status = store.CreateFeatureGroup(invalid_group);
+  assert(!status.ok());
+
   mxdb::EntityFeatureBatch batch;
   batch.entity = {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"};
   batch.events.push_back({

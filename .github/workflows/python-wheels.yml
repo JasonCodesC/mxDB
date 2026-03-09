@@ -27,45 +27,6 @@ jobs:
       - name: Install build tooling
         run: python -m pip install --upgrade pip cibuildwheel==2.21.3
 
-      - name: Prime cibuildwheel virtualenv cache
-        run: |
-          python - <<'PY'
-          import pathlib
-          import re
-          import time
-          import urllib.request
-
-          import cibuildwheel.util as util
-
-          cache_dir = pathlib.Path(util.CIBW_CACHE_PATH)
-          cache_dir.mkdir(parents=True, exist_ok=True)
-
-          source = pathlib.Path(util.__file__).read_text(encoding="utf-8")
-          match = re.search(r"virtualenv-(\d+\.\d+\.\d+)\.pyz", source)
-          version = match.group(1) if match else "20.26.6"
-
-          target = cache_dir / f"virtualenv-{version}.pyz"
-          if target.exists():
-              print(f"virtualenv cache already present: {target}")
-              raise SystemExit(0)
-
-          url = "https://bootstrap.pypa.io/virtualenv.pyz"
-          last_error = None
-          for attempt in range(1, 6):
-              try:
-                  print(f"download attempt {attempt}: {url}")
-                  with urllib.request.urlopen(url, timeout=120) as response:
-                      target.write_bytes(response.read())
-                  print(f"cached virtualenv at {target}")
-                  raise SystemExit(0)
-              except Exception as exc:  # noqa: BLE001
-                  last_error = exc
-                  print(f"attempt {attempt} failed: {exc}")
-                  time.sleep(10 * attempt)
-
-          raise SystemExit(f"failed to prime virtualenv cache: {last_error}")
-          PY
-
       - name: Cache cibuildwheel assets
         uses: actions/cache@v4
         with:
@@ -75,6 +36,9 @@ jobs:
             ~\AppData\Local\pypa\cibuildwheel\Cache
           key: ${{ runner.os }}-cibw-2.21.3-${{ hashFiles('.github/workflows/python-wheels.yml') }}
 
+      - name: Prime cibuildwheel virtualenv cache
+        run: python sdk/python/scripts/prime_cibuildwheel_cache.py
+
       - name: Build wheels
         env:
           CIBW_BUILD: "cp310-* cp311-* cp312-*"
@@ -83,6 +47,8 @@ jobs:
           CIBW_BEFORE_BUILD: "python -m pip install --upgrade pip cmake && python {package}/scripts/build_featurectl_for_wheel.py"
           CIBW_BUILD_VERBOSITY: "2"
           CIBW_BEFORE_ALL_LINUX: "yum install -y sqlite-devel || true"
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: ""
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: ""
           CIBW_TEST_COMMAND: "python -c \"from mxdb._binary import resolve_featurectl_binary; p=resolve_featurectl_binary(); print(p)\""
         uses: nick-fields/retry@v3
         with:

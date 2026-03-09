@@ -72,7 +72,7 @@ add_library(mxdb_admin
   engine/admin/admin_service.cc
 )
 target_include_directories(mxdb_admin PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(mxdb_admin PUBLIC mxdb_common mxdb_storage)
+target_link_libraries(mxdb_admin PUBLIC mxdb_common mxdb_storage mxdb_catalog)
 
 add_library(mxdb_storage
   engine/storage/feature_engine.cc
@@ -109,6 +109,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_temporal_semantics PRIVATE mxdb_storage)
   add_test(NAME test_temporal_semantics COMMAND test_temporal_semantics)
 
+  add_executable(test_write_id_concurrency tests/unit/test_write_id_concurrency.cc)
+  target_link_libraries(test_write_id_concurrency PRIVATE mxdb_catalog mxdb_storage)
+  add_test(NAME test_write_id_concurrency COMMAND test_write_id_concurrency)
+
   add_executable(test_end_to_end tests/integration/test_end_to_end.cc)
   target_link_libraries(test_end_to_end PRIVATE mxdb_catalog mxdb_storage mxdb_recovery mxdb_admin)
   add_test(NAME test_end_to_end COMMAND test_end_to_end)
@@ -124,6 +128,10 @@ if(BUILD_TESTING)
   add_executable(test_admin_ops tests/integration/test_admin_ops.cc)
   target_link_libraries(test_admin_ops PRIVATE mxdb_catalog mxdb_storage mxdb_recovery mxdb_admin)
   add_test(NAME test_admin_ops COMMAND test_admin_ops)
+
+  add_executable(test_restore_correctness tests/integration/test_restore_correctness.cc)
+  target_link_libraries(test_restore_correctness PRIVATE mxdb_catalog mxdb_storage mxdb_recovery mxdb_admin)
+  add_test(NAME test_restore_correctness COMMAND test_restore_correctness)
 
   add_test(
     NAME test_python_sdk

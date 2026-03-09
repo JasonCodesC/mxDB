@@ -88,6 +88,10 @@ class FeatureEngine {
   void ApplyEventToLatestLocked(const FeatureEvent& event, PartitionState* partition);
   void MarkWriteIdSeenLocked(const std::string& write_id);
   bool IsWriteIdSeenLocked(const std::string& write_id) const;
+  void MarkWriteIdInflightLocked(const std::string& write_id);
+  bool IsWriteIdInflightLocked(const std::string& write_id) const;
+  void ReleaseWriteIdsInflightLocked(const std::vector<std::string>& write_ids);
+  void ResetRuntimeStateLocked();
   Status FlushPartitionLocked(size_t partition_id);
   Status LoadImmutableSegments();
 
@@ -103,8 +107,10 @@ class FeatureEngine {
   mutable std::shared_mutex mu_;
   std::vector<PartitionState> partitions_;
   std::unordered_set<std::string> seen_write_ids_;
+  std::unordered_set<std::string> inflight_write_ids_;
   CheckpointState checkpoint_state_;
   bool read_only_ = false;
+  bool started_ = false;
 
   std::atomic<Lsn> next_lsn_{1};
   std::atomic<uint64_t> next_sequence_no_{1};

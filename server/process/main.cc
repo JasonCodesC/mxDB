@@ -1,11 +1,23 @@
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include "engine/catalog/metadata_store.h"
 #include "engine/common/config/config.h"
 #include "engine/common/logging/logging.h"
 #include "engine/recovery/recovery_manager.h"
 #include "engine/storage/feature_engine.h"
+
+namespace {
+
+std::atomic<bool> g_shutdown_requested{false};
+
+void HandleSignal(int /*signal*/) { g_shutdown_requested.store(true); }
+
+}  // namespace
 
 int main(int argc, char** argv) {
   std::string config_path = "featured.conf";
@@ -41,6 +53,13 @@ int main(int argc, char** argv) {
             << " lsn=" << engine.CurrentLsn()
             << " truncated_tail=" << (truncated_tail ? "true" : "false")
             << "\n";
+
+  std::signal(SIGINT, HandleSignal);
+  std::signal(SIGTERM, HandleSignal);
+
+  while (!g_shutdown_requested.load()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
 
   status = engine.Stop();
   if (!status.ok()) {

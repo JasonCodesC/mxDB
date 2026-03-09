@@ -99,6 +99,11 @@ Status MetadataStore::Open(const std::string& sqlite_path) {
     return SqliteError(db_, "sqlite open failed");
   }
 
+  Status fk_status = Exec(db_, "PRAGMA foreign_keys = ON;");
+  if (!fk_status.ok()) {
+    return fk_status;
+  }
+
   return RunMigrations();
 }
 

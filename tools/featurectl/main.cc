@@ -1,5 +1,9 @@
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <exception>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <string>
 
@@ -29,7 +33,7 @@ void PrintUsage() {
       << "  backup <destination_dir>\n"
       << "  restore <source_dir> [readonly]\n"
       << "  register-feature <tenant> <entity_type> <feature_id> <feature_name> <value_type>\n"
-      << "  ingest <tenant> <entity_type> <entity_id> <feature_id> <event_us> <system_us|auto> <double_value> <write_id>\n"
+      << "  ingest <tenant> <entity_type> <entity_id> <feature_id> <event_us> <system_us|auto> <value> <write_id>\n"
       << "  latest <tenant> <entity_type> <entity_id> <feature_id>\n"
       << "  asof <tenant> <entity_type> <entity_id> <feature_id> <event_cutoff_us> <system_cutoff_us>\n";
 }
@@ -48,6 +52,75 @@ mxdb::StatusOr<mxdb::ValueType> ParseValueType(const std::string& value_type) {
     return mxdb::ValueType::kBool;
   }
   return mxdb::Status::InvalidArgument("unsupported value_type for CLI");
+}
+
+mxdb::StatusOr<bool> ParseBool(const std::string& value) {
+  std::string lower;
+  lower.reserve(value.size());
+  std::transform(value.begin(), value.end(), std::back_inserter(lower),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (lower == "true" || lower == "1") {
+    return true;
+  }
+  if (lower == "false" || lower == "0") {
+    return false;
+  }
+  return mxdb::Status::InvalidArgument("invalid bool literal: " + value);
+}
+
+mxdb::StatusOr<mxdb::FeatureValue> ParseLiteralForType(mxdb::ValueType type,
+                                                       const std::string& literal) {
+  mxdb::FeatureValue value;
+  value.type = type;
+  try {
+    switch (type) {
+      case mxdb::ValueType::kBool: {
+        auto parsed = ParseBool(literal);
+        if (!parsed.ok()) {
+          return parsed.status();
+        }
+        value.value = parsed.value();
+        return value;
+      }
+      case mxdb::ValueType::kInt64:
+        value.value = static_cast<int64_t>(std::stoll(literal));
+        return value;
+      case mxdb::ValueType::kDouble:
+        value.value = std::stod(literal);
+        return value;
+      case mxdb::ValueType::kString:
+        value.value = literal;
+        return value;
+      default:
+        return mxdb::Status::InvalidArgument(
+            "featurectl ingest supports bool, int64, double, and string");
+    }
+  } catch (const std::exception&) {
+    return mxdb::Status::InvalidArgument("invalid value literal for feature type");
+  }
+}
+
+mxdb::StatusOr<std::string> RenderValue(const mxdb::FeatureValue& value) {
+  if (value.IsNull()) {
+    return std::string("null");
+  }
+
+  try {
+    switch (value.type) {
+      case mxdb::ValueType::kBool:
+        return std::string(std::get<bool>(value.value) ? "true" : "false");
+      case mxdb::ValueType::kInt64:
+        return std::to_string(std::get<int64_t>(value.value));
+      case mxdb::ValueType::kDouble:
+        return std::to_string(std::get<double>(value.value));
+      case mxdb::ValueType::kString:
+        return std::get<std::string>(value.value);
+      default:
+        return mxdb::Status::InvalidArgument("unsupported value type for render");
+    }
+  } catch (const std::bad_variant_access&) {
+    return mxdb::Status::Internal("feature value type/variant mismatch");
+  }
 }
 
 }  // namespace
@@ -85,7 +158,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  mxdb::AdminService admin(&engine, &config);
+  mxdb::AdminService admin(&engine, &config, &metadata);
 
   if (command == "health") {
     mxdb::HealthStatus health = admin.GetHealth();
@@ -152,6 +225,18 @@ int main(int argc, char** argv) {
       return 1;
     }
 
+    auto feature = metadata.GetFeatureById(argv[3], argv[6]);
+    if (!feature.ok()) {
+      status = feature.status();
+      goto done;
+    }
+
+    auto value = ParseLiteralForType(feature.value().value_type, argv[9]);
+    if (!value.ok()) {
+      status = value.status();
+      goto done;
+    }
+
     mxdb::EntityFeatureBatch batch;
     batch.entity = {.tenant_id = argv[3], .entity_type = argv[4], .entity_id = argv[5]};
 
@@ -161,7 +246,7 @@ int main(int argc, char** argv) {
     if (std::string(argv[8]) != "auto") {
       event.system_time_us = std::stoll(argv[8]);
     }
-    event.value = {.type = mxdb::ValueType::kDouble, .value = std::stod(argv[9])};
+    event.value = value.value();
     event.operation = mxdb::OperationType::kUpsert;
     event.write_id = argv[10];
     event.source_id = "featurectl";
@@ -193,8 +278,13 @@ int main(int argc, char** argv) {
       if (!feature.found) {
         std::cout << "found=0\n";
       } else {
+        auto rendered = RenderValue(feature.value);
+        if (!rendered.ok()) {
+          status = rendered.status();
+          goto done;
+        }
         std::cout << "found=1"
-                  << " value=" << std::get<double>(feature.value.value)
+                  << " value=" << rendered.value()
                   << " event_time_us=" << feature.event_time_us
                   << " system_time_us=" << feature.system_time_us
                   << " lsn=" << latest.value().visible_commit.lsn << "\n";
@@ -219,8 +309,13 @@ int main(int argc, char** argv) {
       if (!feature.found) {
         std::cout << "found=0\n";
       } else {
+        auto rendered = RenderValue(feature.value);
+        if (!rendered.ok()) {
+          status = rendered.status();
+          goto done;
+        }
         std::cout << "found=1"
-                  << " value=" << std::get<double>(feature.value.value)
+                  << " value=" << rendered.value()
                   << " event_time_us=" << feature.event_time_us
                   << " system_time_us=" << feature.system_time_us << "\n";
       }
@@ -230,6 +325,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+done:
   if (!status.ok()) {
     std::cerr << "command failed: " << status.message() << "\n";
     return 1;

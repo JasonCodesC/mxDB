@@ -32,6 +32,14 @@ FeatureEngine::FeatureEngine(const EngineConfig& config,
 }
 
 Status FeatureEngine::Start() {
+  {
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    if (started_) {
+      return Status::FailedPrecondition("engine already started");
+    }
+    ResetRuntimeStateLocked();
+  }
+
   std::error_code ec;
   std::filesystem::create_directories(config_.wal_dir, ec);
   if (ec) {
@@ -68,23 +76,35 @@ Status FeatureEngine::Start() {
   if (!checkpoint.ok()) {
     return checkpoint.status();
   }
-  checkpoint_state_ = checkpoint.value();
+  {
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    checkpoint_state_ = checkpoint.value();
+  }
 
-  return LoadImmutableSegments();
+  Status load_status = LoadImmutableSegments();
+  if (!load_status.ok()) {
+    return load_status;
+  }
+
+  {
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    started_ = true;
+  }
+
+  return Status::Ok();
 }
 
-Status FeatureEngine::Stop() { return wal_writer_.Close(); }
+Status FeatureEngine::Stop() {
+  Status status = wal_writer_.Close();
+  std::unique_lock<std::shared_mutex> lock(mu_);
+  started_ = false;
+  inflight_write_ids_.clear();
+  return status;
+}
 
 StatusOr<EntityCommitResult> FeatureEngine::WriteEntityBatch(
     const EntityFeatureBatch& batch, DurabilityMode durability_mode,
     bool allow_trusted_system_time) {
-  {
-    std::shared_lock<std::shared_mutex> lock(mu_);
-    if (read_only_) {
-      return Status::FailedPrecondition("engine is in read-only mode");
-    }
-  }
-
   auto validation = validator_.ValidateWriteBatch(batch, allow_trusted_system_time);
   if (!validation.ok()) {
     return validation.status();
@@ -92,13 +112,28 @@ StatusOr<EntityCommitResult> FeatureEngine::WriteEntityBatch(
 
   std::vector<FeatureEvent> new_events;
   new_events.reserve(batch.events.size());
+  std::vector<std::string> reserved_write_ids;
+  reserved_write_ids.reserve(batch.events.size());
 
   const TimestampMicros commit_system_time_us = NowMicros();
   {
-    std::shared_lock<std::shared_mutex> lock(mu_);
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    if (!started_) {
+      return Status::FailedPrecondition("engine is not started");
+    }
+    if (read_only_) {
+      return Status::FailedPrecondition("engine is in read-only mode");
+    }
+
     for (const auto& event_input : batch.events) {
-      if (IsWriteIdSeenLocked(event_input.write_id)) {
+      if (IsWriteIdSeenLocked(event_input.write_id) ||
+          IsWriteIdInflightLocked(event_input.write_id)) {
         continue;
+      }
+
+      if (!event_input.write_id.empty()) {
+        MarkWriteIdInflightLocked(event_input.write_id);
+        reserved_write_ids.push_back(event_input.write_id);
       }
 
       FeatureEvent event;
@@ -136,10 +171,16 @@ StatusOr<EntityCommitResult> FeatureEngine::WriteEntityBatch(
 
   Status status = wal_writer_.Append(lsn, payload, durability_mode);
   if (!status.ok()) {
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    ReleaseWriteIdsInflightLocked(reserved_write_ids);
     return status;
   }
 
   status = ApplyCommittedBatch(new_events, true);
+  {
+    std::unique_lock<std::shared_mutex> lock(mu_);
+    ReleaseWriteIdsInflightLocked(reserved_write_ids);
+  }
   if (!status.ok()) {
     return status;
   }
@@ -170,8 +211,12 @@ StatusOr<std::vector<EntityCommitResult>> FeatureEngine::WriteEntityBatches(
 }
 
 Status FeatureEngine::RecoverFromWal(const WalReplayResult& replay) {
+  const bool checkpoint_is_durable =
+      checkpoint_state_.exists &&
+      manifest_.LatestVersion() >= checkpoint_state_.manifest_version;
+
   for (const auto& record : replay.records) {
-    if (checkpoint_state_.exists &&
+    if (checkpoint_is_durable &&
         record.header.lsn <= checkpoint_state_.checkpoint_lsn) {
       continue;
     }
@@ -563,6 +608,38 @@ bool FeatureEngine::IsWriteIdSeenLocked(const std::string& write_id) const {
     return false;
   }
   return seen_write_ids_.find(write_id) != seen_write_ids_.end();
+}
+
+void FeatureEngine::MarkWriteIdInflightLocked(const std::string& write_id) {
+  if (!write_id.empty()) {
+    inflight_write_ids_.insert(write_id);
+  }
+}
+
+bool FeatureEngine::IsWriteIdInflightLocked(const std::string& write_id) const {
+  if (write_id.empty()) {
+    return false;
+  }
+  return inflight_write_ids_.find(write_id) != inflight_write_ids_.end();
+}
+
+void FeatureEngine::ReleaseWriteIdsInflightLocked(
+    const std::vector<std::string>& write_ids) {
+  for (const auto& write_id : write_ids) {
+    inflight_write_ids_.erase(write_id);
+  }
+}
+
+void FeatureEngine::ResetRuntimeStateLocked() {
+  partitions_.clear();
+  partitions_.resize(std::max<size_t>(1, config_.partition_count));
+  seen_write_ids_.clear();
+  inflight_write_ids_.clear();
+  checkpoint_state_ = CheckpointState{};
+
+  next_lsn_.store(1);
+  next_sequence_no_.store(1);
+  next_segment_id_.store(1);
 }
 
 Status FeatureEngine::FlushPartitionLocked(size_t partition_id) {

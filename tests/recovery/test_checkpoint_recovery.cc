@@ -1,7 +1,9 @@
 #include <cassert>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <vector>
 
 #include "engine/catalog/metadata_store.h"
 #include "engine/recovery/recovery_manager.h"
@@ -59,6 +61,28 @@ void SeedMetadata(mxdb::MetadataStore* metadata) {
   assert(status.ok());
 }
 
+void DropLastManifestEntry(const std::string& manifest_path) {
+  std::ifstream in(manifest_path);
+  assert(in.is_open());
+
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (!line.empty()) {
+      lines.push_back(line);
+    }
+  }
+  assert(lines.size() >= 2);
+  lines.pop_back();
+
+  std::ofstream out(manifest_path, std::ios::out | std::ios::trunc);
+  assert(out.is_open());
+  for (const auto& kept : lines) {
+    out << kept << '\n';
+  }
+  assert(out.good());
+}
+
 }  // namespace
 
 int main() {
@@ -100,6 +124,10 @@ int main() {
 
   assert(std::filesystem::exists(config.manifest_path));
   assert(std::filesystem::exists(config.checkpoint_path));
+
+  // Simulate a crash window where checkpoint metadata advanced but manifest durability
+  // did not. Recovery must replay WAL instead of trusting checkpoint_lsn.
+  DropLastManifestEntry(config.manifest_path);
 
   {
     mxdb::FeatureEngine engine(config, &metadata);

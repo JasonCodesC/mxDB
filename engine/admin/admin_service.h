@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
+#include "engine/catalog/metadata_store.h"
 #include "engine/common/config/config.h"
 #include "engine/common/status/status.h"
 #include "engine/storage/feature_engine.h"
@@ -26,8 +28,9 @@ struct CompactionStatus {
 
 class AdminService {
  public:
-  AdminService(FeatureEngine* engine, const EngineConfig* config)
-      : engine_(engine), config_(config) {}
+  AdminService(FeatureEngine* engine, const EngineConfig* config,
+               MetadataStore* metadata_store = nullptr)
+      : engine_(engine), config_(config), metadata_store_(metadata_store) {}
 
   HealthStatus GetHealth() const;
   CompactionStatus GetCompactionStatus() const;
@@ -41,9 +44,14 @@ class AdminService {
  private:
   static Status CopyPath(const std::string& from, const std::string& to,
                          bool recursive);
+  static Status RemoveIfExists(const std::filesystem::path& path);
+  static Status SwapInDirectory(const std::filesystem::path& prepared_source,
+                                const std::filesystem::path& target);
+  static std::string TempPathSuffix(const std::string& prefix);
 
   FeatureEngine* engine_ = nullptr;
   const EngineConfig* config_ = nullptr;
+  MetadataStore* metadata_store_ = nullptr;
 };
 
 }  // namespace mxdb

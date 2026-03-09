@@ -53,6 +53,7 @@ class build_py(_build_py):
         build_dir = Path(
             os.environ.get("MXDB_FEATURECTL_BUILD_DIR", str(repo_root / "build-wheel"))
         )
+        shutil.rmtree(build_dir, ignore_errors=True)
 
         self._run(["cmake", "-S", str(repo_root), "-B", str(build_dir)])
 
