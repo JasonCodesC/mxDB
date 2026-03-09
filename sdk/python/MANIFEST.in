@@ -1,3 +1,5 @@
 include README.md
+include src/mxdb/bin/featurectl
+include src/mxdb/bin/featurectl.exe
 include src/mxdb/bin/featurectl.gz
 include src/mxdb/bin/featurectl.exe.gz

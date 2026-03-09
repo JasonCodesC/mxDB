@@ -1,7 +1,10 @@
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <thread>
 
 #include "engine/admin/admin_service.h"
 #include "engine/catalog/metadata_store.h"
@@ -87,15 +90,53 @@ int main() {
                                        mxdb::DurabilityMode::kSync, true);
   assert(write.ok());
 
+  // Slow backup copy enough to overlap concurrent write attempts.
+  {
+    std::ofstream filler(std::filesystem::path(config.data_dir) / "backup-load.bin",
+                         std::ios::binary | std::ios::trunc);
+    assert(filler.is_open());
+    std::string chunk(1024 * 1024, 'x');
+    for (int i = 0; i < 8; ++i) {
+      filler.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+    }
+    assert(filler.good());
+  }
+
+  std::atomic<bool> stop_writer{false};
+  std::atomic<int> failed_writes{0};
+  std::atomic<int> attempted_writes{0};
+  std::thread writer([&]() {
+    int counter = 0;
+    while (!stop_writer.load()) {
+      auto result = engine.WriteEntityBatch(
+          MakeEvent("race-" + std::to_string(counter), 50.0 + counter, 1000 + counter,
+                    1000 + counter),
+          mxdb::DurabilityMode::kSync, true);
+      attempted_writes.fetch_add(1);
+      if (!result.ok()) {
+        failed_writes.fetch_add(1);
+      }
+      ++counter;
+    }
+  });
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
   status = admin.StartBackup(backup_dir.string());
+  stop_writer.store(true);
+  writer.join();
+
   assert(status.ok());
   assert(std::filesystem::exists(backup_dir / "data"));
+  assert(attempted_writes.load() > 0);
+  assert(failed_writes.load() > 0);
 
   status = admin.SetReadOnlyMode(true);
   assert(status.ok());
   auto blocked = engine.WriteEntityBatch(MakeEvent("w2", 2.0, 101, 101),
                                          mxdb::DurabilityMode::kSync, true);
   assert(!blocked.ok());
+  auto compact_blocked = engine.CompactImmutableSegments();
+  assert(!compact_blocked.ok());
 
   status = admin.SetReadOnlyMode(false);
   assert(status.ok());

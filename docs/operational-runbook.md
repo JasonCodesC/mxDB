@@ -34,13 +34,19 @@ build/featurectl featured.conf register-feature prod instrument f_price price do
 build/featurectl featured.conf register-feature prod instrument f_flag flag bool
 build/featurectl featured.conf ingest prod instrument AAPL f_price 100 100 101.5 w1
 build/featurectl featured.conf ingest prod instrument AAPL f_flag 101 101 true w2
+build/featurectl featured.conf ingest prod instrument AAPL f_price 102 102 0.0 w3 delete
 build/featurectl featured.conf latest prod instrument AAPL f_price
 build/featurectl featured.conf latest prod instrument AAPL f_price 5
+build/featurectl featured.conf get prod instrument AAPL
 build/featurectl featured.conf asof prod instrument AAPL f_price 100 100
 ```
 
 Supported CLI value types:
 `double`, `int64`, `string`, `bool`, `float_vector`, `double_vector`.
+
+`ingest` operation:
+- default is `upsert`
+- pass final argument `delete` to write tombstones
 
 ## Checkpoint and Compaction
 
@@ -62,3 +68,10 @@ build/featurectl featured.conf restore /tmp/mxdb-backup readonly
 build/featurectl featured.conf readonly on
 build/featurectl featured.conf readonly off
 ```
+
+Notes:
+
+- Enabling read-only mode now forces a memtable flush so serving reads observe a
+  stable snapshot.
+- Compaction is intentionally blocked while read-only mode is enabled to avoid
+  mutating in-memory/segment state during freeze windows.

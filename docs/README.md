@@ -15,6 +15,7 @@ This directory maps the specification, ADRs, API contracts, and execution plan f
 - ADR index: [adr/README.md](adr/README.md)
 - Operational runbook: [operational-runbook.md](operational-runbook.md)
 - Python packaging: [python-packaging.md](python-packaging.md)
+- Python SDK usage: [../sdk/python/README.md](../sdk/python/README.md)
 - Known limitations: [known-limitations.md](known-limitations.md)
 
 ## Machine-Readable Contracts

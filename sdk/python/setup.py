@@ -40,13 +40,18 @@ class build_py(_build_py):
                     f"MXDB_FEATURECTL_BIN does not exist: {source_binary}"
                 )
             shutil.copy2(source_binary, dest_binary)
-            self._compress_binary(dest_binary, dest_gzip)
+            self._ensure_executable(dest_binary)
             return
 
-        if dest_gzip.exists():
-            return
         if dest_binary.exists():
-            self._compress_binary(dest_binary, dest_gzip)
+            self._ensure_executable(dest_binary)
+            return
+
+        # Backward compatibility for local builds that may still have legacy .gz payloads.
+        if dest_gzip.exists():
+            with gzip.open(dest_gzip, "rb") as source, dest_binary.open("wb") as target:
+                shutil.copyfileobj(source, target)
+            self._ensure_executable(dest_binary)
             return
 
         repo_root = self._discover_repo_root(package_root)
@@ -66,7 +71,7 @@ class build_py(_build_py):
 
         built_binary = self._find_built_binary(build_dir, exe_name)
         shutil.copy2(built_binary, dest_binary)
-        self._compress_binary(dest_binary, dest_gzip)
+        self._ensure_executable(dest_binary)
 
     @staticmethod
     def _run(cmd: list[str]) -> None:
@@ -105,12 +110,6 @@ class build_py(_build_py):
             return
         mode = path.stat().st_mode
         path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-    def _compress_binary(self, src_binary: Path, dest_gzip: Path) -> None:
-        self._ensure_executable(src_binary)
-        with src_binary.open("rb") as source, gzip.open(dest_gzip, "wb") as target:
-            shutil.copyfileobj(source, target)
-        src_binary.unlink(missing_ok=True)
 
     @staticmethod
     def _discover_repo_root(package_root: Path) -> Path:

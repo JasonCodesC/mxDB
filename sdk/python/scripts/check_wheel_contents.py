@@ -18,17 +18,21 @@ def main() -> int:
     def has_suffix(suffix: str) -> bool:
         return any(name.endswith(suffix) for name in names)
 
-    wanted_suffixes = [
+    required_suffixes = [
         "mxdb/client.py",
         "mxdb/_binary.py",
-        "mxdb/bin/featurectl.gz",
     ]
-
-    missing = [suffix for suffix in wanted_suffixes if not has_suffix(suffix)]
+    missing = [suffix for suffix in required_suffixes if not has_suffix(suffix)]
     if missing:
         print("missing entries:")
         for suffix in missing:
             print(suffix)
+        return 1
+
+    # Linux/macOS wheels should contain a native featurectl payload.
+    if not (has_suffix("mxdb/bin/featurectl") or has_suffix("mxdb/bin/featurectl.gz")):
+        print("missing entries:")
+        print("mxdb/bin/featurectl (or legacy mxdb/bin/featurectl.gz)")
         return 1
 
     print("wheel contains bundled featurectl and SDK files")

@@ -1,11 +1,10 @@
 #include <cassert>
 #include <chrono>
 #include <filesystem>
-#include <fstream>
 #include <string>
 
-#include "engine/admin/admin_service.h"
 #include "engine/catalog/metadata_store.h"
+#include "engine/recovery/recovery_manager.h"
 #include "engine/storage/feature_engine.h"
 
 namespace {
@@ -45,9 +44,7 @@ mxdb::EntityFeatureBatch MakeEvent(const std::string& write_id, double value,
                                    mxdb::TimestampMicros event_time,
                                    mxdb::TimestampMicros system_time) {
   mxdb::EntityFeatureBatch batch;
-  batch.entity = {
-      .tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"};
-
+  batch.entity = {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"};
   mxdb::FeatureEventInput event;
   event.feature_id = "f_price";
   event.event_time_us = event_time;
@@ -55,7 +52,7 @@ mxdb::EntityFeatureBatch MakeEvent(const std::string& write_id, double value,
   event.value = {.type = mxdb::ValueType::kDouble, .value = value};
   event.operation = mxdb::OperationType::kUpsert;
   event.write_id = write_id;
-  event.source_id = "restore-test";
+  event.source_id = "write-failure-test";
   batch.events.push_back(std::move(event));
   return batch;
 }
@@ -74,16 +71,16 @@ double ReadLatestPrice(mxdb::FeatureEngine* engine) {
 }  // namespace
 
 int main() {
-  const auto tmp = UniqueTmpDir("restore-correctness");
-  const auto backup_dir = tmp / "backup";
+  const auto tmp = UniqueTmpDir("write-failure-semantics");
 
   mxdb::EngineConfig config;
-  config.data_dir = (tmp / "data").string();
-  config.metadata_path = (tmp / "data" / "catalog" / "metadata.db").string();
-  config.wal_dir = (tmp / "data" / "wal").string();
-  config.segment_dir = (tmp / "data" / "segments").string();
-  config.manifest_path = (tmp / "data" / "manifest" / "manifest.log").string();
-  config.checkpoint_path = (tmp / "data" / "checkpoints" / "checkpoint.meta").string();
+  config.data_dir = tmp.string();
+  config.metadata_path = (tmp / "catalog" / "metadata.db").string();
+  config.wal_dir = (tmp / "wal").string();
+  config.segment_dir = (tmp / "segments").string();
+  config.manifest_path = (tmp / "manifest" / "manifest.log").string();
+  config.checkpoint_path = (tmp / "checkpoints" / "checkpoint.meta").string();
+  config.memtable_flush_event_threshold = 1;
 
   mxdb::MetadataStore metadata;
   mxdb::Status status = metadata.Open(config.metadata_path);
@@ -92,55 +89,50 @@ int main() {
   status = metadata.CreateFeature(MakeFeature());
   assert(status.ok());
 
-  mxdb::FeatureEngine engine(config, &metadata);
-  status = engine.Start();
-  assert(status.ok());
-
-  mxdb::AdminService admin(&engine, &config, &metadata);
-
-  auto w1 = engine.WriteEntityBatch(MakeEvent("w1", 10.0, 100, 100),
-                                    mxdb::DurabilityMode::kSync, true);
-  assert(w1.ok());
-  assert(ReadLatestPrice(&engine) == 10.0);
-
-  status = admin.StartBackup(backup_dir.string());
-  assert(status.ok());
-
-  auto w2 = engine.WriteEntityBatch(MakeEvent("w2", 20.0, 200, 200),
-                                    mxdb::DurabilityMode::kSync, true);
-  assert(w2.ok());
-  assert(ReadLatestPrice(&engine) == 20.0);
-
-  const std::filesystem::path live_only_marker =
-      std::filesystem::path(config.data_dir) / "live-only-marker.txt";
   {
-    std::ofstream out(live_only_marker);
-    assert(out.is_open());
-    out << "live only\n";
-    assert(out.good());
+    mxdb::FeatureEngine engine(config, &metadata);
+    status = engine.Start();
+    assert(status.ok());
+
+    engine.InjectFlushFailureForTest(1);
+    auto result = engine.WriteEntityBatch(MakeEvent("w1", 10.0, 100, 100),
+                                          mxdb::DurabilityMode::kSync, true);
+    // Contract: WAL append success means the write is committed even if flush fails.
+    assert(result.ok());
+    assert(result.value().accepted_events == 1);
+    assert(ReadLatestPrice(&engine) == 10.0);
+
+    status = engine.Stop();
+    assert(status.ok());
   }
-  assert(std::filesystem::exists(live_only_marker));
-  assert(!std::filesystem::exists(backup_dir / "data" / "live-only-marker.txt"));
 
-  status = admin.RestoreBackup(backup_dir.string(), /*start_read_only=*/false);
-  assert(status.ok());
+  {
+    mxdb::FeatureEngine engine(config, &metadata);
+    status = engine.Start();
+    assert(status.ok());
 
-  // Restore must refresh in-memory state from restored on-disk snapshot.
-  assert(ReadLatestPrice(&engine) == 10.0);
-  // Restore should not merge backup and post-backup live files.
-  assert(!std::filesystem::exists(live_only_marker));
+    mxdb::RecoveryManager recovery(&engine);
+    bool had_truncated_tail = false;
+    status = recovery.RecoverFromWalDirectory(config.wal_dir, &had_truncated_tail);
+    assert(status.ok());
+    assert(!had_truncated_tail);
 
-  auto w3 = engine.WriteEntityBatch(MakeEvent("w3", 30.0, 300, 300),
-                                    mxdb::DurabilityMode::kSync, true);
-  assert(w3.ok());
-  assert(ReadLatestPrice(&engine) == 30.0);
+    auto as_of = engine.AsOfLookup(
+        {.entity = {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"},
+         .feature_ids = {"f_price"},
+         .event_cutoff_us = 200,
+         .system_cutoff_us = 200});
+    assert(as_of.ok());
+    assert(as_of.value().features.size() == 1);
+    assert(as_of.value().features[0].found);
+    assert(std::get<double>(as_of.value().features[0].value.value) == 10.0);
 
-  status = engine.Stop();
-  assert(status.ok());
+    status = engine.Stop();
+    assert(status.ok());
+  }
 
   status = metadata.Close();
   assert(status.ok());
-
   std::filesystem::remove_all(tmp);
   return 0;
 }

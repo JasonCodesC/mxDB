@@ -155,6 +155,15 @@ int main() {
     assert(dedupe.ok());
     assert(dedupe.value().accepted_events == 0);
 
+    auto after_dedupe = engine.AsOfLookup(
+        {.entity = {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"},
+         .feature_ids = {"f_price"},
+         .event_cutoff_us = 400,
+         .system_cutoff_us = 400});
+    assert(after_dedupe.ok());
+    assert(after_dedupe.value().features[0].found);
+    assert(std::get<double>(after_dedupe.value().features[0].value.value) == 11.0);
+
     status = engine.Stop();
     assert(status.ok());
   }

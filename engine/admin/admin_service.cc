@@ -44,6 +44,10 @@ Status AdminService::SetReadOnlyMode(bool read_only) {
   return engine_->SetReadOnly(read_only);
 }
 
+void AdminService::InjectRestoreFailureAfterSwapForTest() {
+  fail_restore_after_swap_for_test_ = true;
+}
+
 Status AdminService::StartBackup(const std::string& destination_dir) {
   const bool was_read_only = engine_->IsReadOnly();
   if (!was_read_only) {
@@ -129,6 +133,9 @@ Status AdminService::RestoreBackup(const std::string& source_dir,
     return status;
   }
 
+  bool engine_started = true;
+  bool metadata_open = true;
+
   status = engine_->Stop();
   if (!status.ok()) {
     if (!was_read_only) {
@@ -136,6 +143,7 @@ Status AdminService::RestoreBackup(const std::string& source_dir,
     }
     return status;
   }
+  engine_started = false;
 
   status = metadata_store_->Close();
   if (!status.ok()) {
@@ -143,48 +151,124 @@ Status AdminService::RestoreBackup(const std::string& source_dir,
     (void)engine_->SetReadOnly(true);
     return status;
   }
+  metadata_open = false;
 
   const std::filesystem::path target_data = config_->data_dir;
   const std::filesystem::path stage_data =
       target_data.parent_path() /
       (target_data.filename().string() + TempPathSuffix("restore-staging"));
+  std::filesystem::path moved_aside_live_data;
 
   status = RemoveIfExists(stage_data);
   if (status.ok()) {
     status = CopyPath(data_source, stage_data.string(), /*recursive=*/true);
   }
   if (status.ok()) {
-    status = SwapInDirectory(stage_data, target_data);
+    status = SwapInDirectory(stage_data, target_data, &moved_aside_live_data);
   } else {
     (void)RemoveIfExists(stage_data);
   }
 
-  Status reopen_status = metadata_store_->Open(config_->metadata_path);
-  if (status.ok() && !reopen_status.ok()) {
-    status = reopen_status;
+  if (status.ok() && fail_restore_after_swap_for_test_) {
+    fail_restore_after_swap_for_test_ = false;
+    status = Status::Internal("injected restore failure after directory swap");
   }
 
-  Status start_status = engine_->Start();
-  if (status.ok() && !start_status.ok()) {
-    status = start_status;
+  if (status.ok()) {
+    status = metadata_store_->Open(config_->metadata_path);
+    if (status.ok()) {
+      metadata_open = true;
+    }
+  }
+
+  if (status.ok()) {
+    status = engine_->Start();
+    if (status.ok()) {
+      engine_started = true;
+    }
   }
 
   if (status.ok()) {
     RecoveryManager recovery(engine_);
     bool had_truncated_tail = false;
-    Status recovery_status =
-        recovery.RecoverFromWalDirectory(config_->wal_dir, &had_truncated_tail);
-    if (!recovery_status.ok()) {
-      status = recovery_status;
+    status = recovery.RecoverFromWalDirectory(config_->wal_dir, &had_truncated_tail);
+  }
+
+  if (status.ok()) {
+    status = engine_->SetReadOnly(start_read_only);
+  }
+
+  if (status.ok()) {
+    if (!moved_aside_live_data.empty()) {
+      Status cleanup_status = RemoveIfExists(moved_aside_live_data);
+      if (!cleanup_status.ok()) {
+        return cleanup_status;
+      }
+    }
+    return Status::Ok();
+  }
+
+  const Status original_restore_failure = status;
+
+  if (engine_started) {
+    (void)engine_->Stop();
+    engine_started = false;
+  }
+  if (metadata_open) {
+    (void)metadata_store_->Close();
+    metadata_open = false;
+  }
+
+  if (!moved_aside_live_data.empty()) {
+    Status cleanup_status = RemoveIfExists(target_data);
+    if (!cleanup_status.ok()) {
+      return Status::Internal("restore failed (" + original_restore_failure.message() +
+                              ") and rollback cleanup failed (" +
+                              cleanup_status.message() + ")");
+    }
+    std::error_code rollback_ec;
+    std::filesystem::rename(moved_aside_live_data, target_data, rollback_ec);
+    if (rollback_ec) {
+      return Status::Internal("restore failed (" + original_restore_failure.message() +
+                              ") and rollback rename failed (" +
+                              rollback_ec.message() + ")");
     }
   }
 
-  Status mode_status = engine_->SetReadOnly(start_read_only);
-  if (status.ok() && !mode_status.ok()) {
-    status = mode_status;
+  Status reopen_status = metadata_store_->Open(config_->metadata_path);
+  if (!reopen_status.ok()) {
+    return Status::Internal("restore failed (" + original_restore_failure.message() +
+                            ") and rollback reopen failed (" +
+                            reopen_status.message() + ")");
+  }
+  metadata_open = true;
+
+  Status restart_status = engine_->Start();
+  if (!restart_status.ok()) {
+    return Status::Internal("restore failed (" + original_restore_failure.message() +
+                            ") and rollback restart failed (" +
+                            restart_status.message() + ")");
+  }
+  engine_started = true;
+
+  RecoveryManager rollback_recovery(engine_);
+  bool rollback_truncated_tail = false;
+  Status rollback_recovery_status =
+      rollback_recovery.RecoverFromWalDirectory(config_->wal_dir, &rollback_truncated_tail);
+  if (!rollback_recovery_status.ok()) {
+    return Status::Internal("restore failed (" + original_restore_failure.message() +
+                            ") and rollback recovery failed (" +
+                            rollback_recovery_status.message() + ")");
   }
 
-  return status;
+  Status restore_mode_status = engine_->SetReadOnly(was_read_only);
+  if (!restore_mode_status.ok()) {
+    return Status::Internal("restore failed (" + original_restore_failure.message() +
+                            ") and rollback read-only restore failed (" +
+                            restore_mode_status.message() + ")");
+  }
+
+  return original_restore_failure;
 }
 
 Status AdminService::CopyPath(const std::string& from, const std::string& to,
@@ -232,8 +316,14 @@ Status AdminService::RemoveIfExists(const std::filesystem::path& path) {
   return Status::Ok();
 }
 
-Status AdminService::SwapInDirectory(const std::filesystem::path& prepared_source,
-                                     const std::filesystem::path& target) {
+Status AdminService::SwapInDirectory(
+    const std::filesystem::path& prepared_source,
+    const std::filesystem::path& target,
+    std::filesystem::path* moved_aside_target) {
+  if (moved_aside_target != nullptr) {
+    moved_aside_target->clear();
+  }
+
   std::error_code ec;
   if (!std::filesystem::exists(prepared_source, ec)) {
     return Status::NotFound("prepared restore directory not found");
@@ -271,9 +361,8 @@ Status AdminService::SwapInDirectory(const std::filesystem::path& prepared_sourc
   }
 
   if (moved_old_target) {
-    Status cleanup_status = RemoveIfExists(old_target);
-    if (!cleanup_status.ok()) {
-      return cleanup_status;
+    if (moved_aside_target != nullptr) {
+      *moved_aside_target = old_target;
     }
   }
 

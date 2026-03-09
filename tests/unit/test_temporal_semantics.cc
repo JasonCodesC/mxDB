@@ -142,10 +142,31 @@ int main() {
       {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"},
       "f_price", 3);
   assert(latest_three.ok());
-  assert(latest_three.value().size() == 3);
-  assert(std::get<double>(latest_three.value()[0].value.value) == 3.0);
-  assert(std::get<double>(latest_three.value()[1].value.value) == 2.0);
-  assert(std::get<double>(latest_three.value()[2].value.value) == 1.0);
+  assert(latest_three.value().empty());
+
+  auto r5 = engine.WriteEntityBatch(
+      OneEvent("w5", mxdb::OperationType::kUpsert, 4.0, 140, 150),
+      mxdb::DurabilityMode::kSync, true);
+  assert(r5.ok());
+
+  auto latest_after_recreate = engine.GetLatest(
+      {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"},
+      {"f_price"});
+  assert(latest_after_recreate.ok());
+  assert(latest_after_recreate.value().features.size() == 1);
+  assert(latest_after_recreate.value().features[0].found);
+  assert(std::get<double>(latest_after_recreate.value().features[0].value.value) ==
+         4.0);
+
+  auto latest_history = engine.GetLatestEvents(
+      {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"},
+      "f_price", 4);
+  assert(latest_history.ok());
+  assert(latest_history.value().size() == 4);
+  assert(std::get<double>(latest_history.value()[0].value.value) == 4.0);
+  assert(std::get<double>(latest_history.value()[1].value.value) == 3.0);
+  assert(std::get<double>(latest_history.value()[2].value.value) == 2.0);
+  assert(std::get<double>(latest_history.value()[3].value.value) == 1.0);
 
   status = engine.Stop();
   assert(status.ok());

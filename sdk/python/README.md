@@ -5,6 +5,10 @@
 For published wheels, `featurectl` is bundled inside the wheel and resolved automatically by `MXDBClient`.
 The wheel build pipeline targets macOS, Linux, and Windows.
 
+Public SDK usage is entity-scoped: bind an entity with
+`client.entity(tenant, entity_type, entity_id)` and call reads/writes on the
+returned `MXDBEntityClient`.
+
 ## Install
 
 ```bash
@@ -23,40 +27,36 @@ client = MXDBClient("featured.conf")
 client.register_feature("prod", "instrument", "f_price", "price", "double")
 client.register_feature("prod", "instrument", "f_vec", "vec", "double_vector")
 
-client.ingest(
-    tenant="prod",
-    entity_type="instrument",
-    entity_id="AAPL",
-    feature_id="f_price",
-    event_time_us=100,
-    system_time_us=100,
-    value=101.5,  # bool/int/float/str/list supported
-    write_id="w1",
-)
-client.ingest(
-    tenant="prod",
-    entity_type="instrument",
-    entity_id="AAPL",
-    feature_id="f_vec",
-    event_time_us=101,
-    system_time_us=101,
-    value=[1.0, 2.5, 3.25],
-    write_id="w2",
-)
+# Bind the entity once, then use short calls.
+aapl = client.entity("prod", "instrument", "AAPL")
 
-latest = client.latest("prod", "instrument", "AAPL", "f_price")
+aapl.ingest("f_price", 100, 101.5, "w1", system_time_us=100)
+aapl.ingest("f_vec", 101, [1.0, 2.5, 3.25], "w2", system_time_us=101)
+
+latest = aapl.latest("f_price")
 print(latest.value_type, latest.value)  # double 101.5
 
-latest_many = client.latest("prod", "instrument", "AAPL", "f_price", count=5)
+latest_many = aapl.latest("f_price", count=5)
 print([x.value for x in latest_many])  # latest 5 (or fewer) values
 
-asof = client.asof("prod", "instrument", "AAPL", "f_vec", 200, 200)
+snapshot = aapl.get()
+print(snapshot["f_price"].value)  # 101.5
+
+asof = aapl.asof("f_vec", 200, 200)
 print(asof.value_type, asof.value)  # double_vector [1.0, 2.5, 3.25]
+
+# Range form: latest value within [start, end] (inclusive).
+asof_range = aapl.asof(
+    "f_price", ("2026:03:09:12:00:00.000", "2026:03:09:12:10:00.000")
+)
+print(asof_range.value)
+
+aapl.delete("f_price", 300, "w-delete-1", system_time_us=300)
 ```
 
 ## Supported Python Value Types
 
-`MXDBClient.ingest()` accepts:
+`MXDBEntityClient.ingest()` accepts:
 
 - `bool` -> `bool`
 - `int` -> `int64`
@@ -66,15 +66,22 @@ print(asof.value_type, asof.value)  # double_vector [1.0, 2.5, 3.25]
 
 Read APIs:
 
-- `latest(..., count=1)` returns one typed result
-- `latest(..., count=N)` with `N > 1` returns up to `N` typed results
-- `asof(...)` returns one typed result
+- `client.entity(tenant, entity_type, entity_id)` returns an entity-scoped client
+- `entity.latest(..., count=1)` returns one typed result
+- `entity.latest(..., count=N)` with `N > 1` returns up to `N` typed results
+- `entity.get()` returns all registered features for that entity key
+- `entity.asof(...)` returns one typed result
 
-Legacy `*_double` methods remain available for double-only code paths.
+Double-only helpers remain available on the entity client: `entity.latest_double(...)` and `entity.asof_double(...)`.
+
+Write APIs:
+
+- `entity.ingest(..., operation="upsert"|"delete")`
+- `entity.delete(...)` convenience wrapper for tombstone writes
 
 ## Return Objects
 
-`latest()` and `asof()` return `TypedFeatureResult` objects with:
+`entity.latest()` and `entity.asof()` return `TypedFeatureResult` objects with:
 
 - `found: bool`
 - `value_type: str | None`
@@ -83,7 +90,13 @@ Legacy `*_double` methods remain available for double-only code paths.
 - `system_time_us: int | None`
 - `lsn: int | None` (`latest()` paths include `lsn`; `asof()` is `None`)
 
-When `count > 1`, `latest()` returns `list[TypedFeatureResult]` in newest-first order.
+When `count > 1`, `entity.latest()` returns `list[TypedFeatureResult]` in newest-first order.
+`entity.get()` returns `dict[str, TypedFeatureResult]` keyed by `feature_id`.
+
+Delete/latest contract:
+
+- if the latest visible event is a tombstone, `entity.latest(..., count=1)` returns `found=False`
+- `entity.latest(..., count>1)` returns `[]` when the latest visible event is a tombstone
 
 ## Binary Resolution Order
 
@@ -91,10 +104,25 @@ When `count > 1`, `latest()` returns `list[TypedFeatureResult]` in newest-first 
 
 1. explicit `featurectl_bin=` argument
 2. `MXDB_FEATURECTL_BIN` environment variable
-3. bundled wheel binary payload (`mxdb/bin/featurectl(.exe).gz`, extracted at runtime)
+3. bundled wheel binary payload (`mxdb/bin/featurectl` or `mxdb/bin/featurectl.exe`)
 4. `featurectl` on `PATH`
 
 If none are found, construction fails with a clear error.
+
+## `asof` Time Inputs
+
+`event_cutoff_us` / `system_cutoff_us` accept:
+
+- epoch microseconds (`int`)
+- `datetime` objects
+- strings in `YYYY:MM:DD:HH:MM:SS[.ffffff]`
+- ISO-8601 strings (for example `2026-03-09T12:34:56Z`)
+- ranges as `(start, end)` or `[start, end]` using any supported time input
+  above
+
+`system_cutoff_us` is optional; if omitted, it defaults to current time.
+For range inputs, `entity.asof(...)` returns the latest visible value in the closed interval.
+Millisecond strings work via fractional seconds (for example `.123`).
 
 ## Building Wheels With Bundled `featurectl`
 

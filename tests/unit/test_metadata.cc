@@ -107,6 +107,21 @@ int main() {
   status = store.CreateFeatureGroup(invalid_group);
   assert(!status.ok());
 
+  status = store.Close();
+  assert(status.ok());
+
+  status = store.Open(db_path);
+  assert(status.ok());
+
+  auto reopened_group = store.GetFeatureGroup("prod", "g_serving");
+  assert(reopened_group.ok());
+  assert(reopened_group.value().feature_ids.size() == 1);
+  assert(reopened_group.value().feature_ids[0] == "f_price");
+
+  auto missing_group = store.GetFeatureGroup("prod", "g_invalid");
+  assert(!missing_group.ok());
+  assert(missing_group.status().code() == mxdb::StatusCode::kNotFound);
+
   mxdb::EntityFeatureBatch batch;
   batch.entity = {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"};
   batch.events.push_back({

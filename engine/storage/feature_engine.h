@@ -51,6 +51,7 @@ class FeatureEngine {
   bool IsReadOnly() const;
   uint64_t ManifestVersion() const;
   size_t SegmentCount() const;
+  void InjectFlushFailureForTest(size_t count = 1);
 
   StatusOr<LatestQueryResult> GetLatest(
       const EntityKey& entity, const std::vector<std::string>& feature_ids,
@@ -97,6 +98,7 @@ class FeatureEngine {
   void ResetRuntimeStateLocked();
   Status FlushPartitionLocked(size_t partition_id);
   Status LoadImmutableSegments();
+  Status EnsureStartedForReadLocked() const;
 
   TimestampMicros NowMicros() const;
 
@@ -112,6 +114,7 @@ class FeatureEngine {
   std::unordered_set<std::string> seen_write_ids_;
   std::unordered_set<std::string> inflight_write_ids_;
   CheckpointState checkpoint_state_;
+  size_t fail_flush_for_test_count_ = 0;
   bool read_only_ = false;
   bool started_ = false;
 

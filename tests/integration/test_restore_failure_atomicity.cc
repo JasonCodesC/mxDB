@@ -1,7 +1,6 @@
 #include <cassert>
 #include <chrono>
 #include <filesystem>
-#include <fstream>
 #include <string>
 
 #include "engine/admin/admin_service.h"
@@ -45,9 +44,7 @@ mxdb::EntityFeatureBatch MakeEvent(const std::string& write_id, double value,
                                    mxdb::TimestampMicros event_time,
                                    mxdb::TimestampMicros system_time) {
   mxdb::EntityFeatureBatch batch;
-  batch.entity = {
-      .tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"};
-
+  batch.entity = {.tenant_id = "prod", .entity_type = "instrument", .entity_id = "AAPL"};
   mxdb::FeatureEventInput event;
   event.feature_id = "f_price";
   event.event_time_us = event_time;
@@ -55,7 +52,7 @@ mxdb::EntityFeatureBatch MakeEvent(const std::string& write_id, double value,
   event.value = {.type = mxdb::ValueType::kDouble, .value = value};
   event.operation = mxdb::OperationType::kUpsert;
   event.write_id = write_id;
-  event.source_id = "restore-test";
+  event.source_id = "restore-atomicity-test";
   batch.events.push_back(std::move(event));
   return batch;
 }
@@ -74,7 +71,7 @@ double ReadLatestPrice(mxdb::FeatureEngine* engine) {
 }  // namespace
 
 int main() {
-  const auto tmp = UniqueTmpDir("restore-correctness");
+  const auto tmp = UniqueTmpDir("restore-failure-atomicity");
   const auto backup_dir = tmp / "backup";
 
   mxdb::EngineConfig config;
@@ -88,7 +85,6 @@ int main() {
   mxdb::MetadataStore metadata;
   mxdb::Status status = metadata.Open(config.metadata_path);
   assert(status.ok());
-
   status = metadata.CreateFeature(MakeFeature());
   assert(status.ok());
 
@@ -111,24 +107,12 @@ int main() {
   assert(w2.ok());
   assert(ReadLatestPrice(&engine) == 20.0);
 
-  const std::filesystem::path live_only_marker =
-      std::filesystem::path(config.data_dir) / "live-only-marker.txt";
-  {
-    std::ofstream out(live_only_marker);
-    assert(out.is_open());
-    out << "live only\n";
-    assert(out.good());
-  }
-  assert(std::filesystem::exists(live_only_marker));
-  assert(!std::filesystem::exists(backup_dir / "data" / "live-only-marker.txt"));
-
+  admin.InjectRestoreFailureAfterSwapForTest();
   status = admin.RestoreBackup(backup_dir.string(), /*start_read_only=*/false);
-  assert(status.ok());
+  assert(!status.ok());
 
-  // Restore must refresh in-memory state from restored on-disk snapshot.
-  assert(ReadLatestPrice(&engine) == 10.0);
-  // Restore should not merge backup and post-backup live files.
-  assert(!std::filesystem::exists(live_only_marker));
+  // Contract: failed restore preserves previously live state and usability.
+  assert(ReadLatestPrice(&engine) == 20.0);
 
   auto w3 = engine.WriteEntityBatch(MakeEvent("w3", 30.0, 300, 300),
                                     mxdb::DurabilityMode::kSync, true);
@@ -137,10 +121,8 @@ int main() {
 
   status = engine.Stop();
   assert(status.ok());
-
   status = metadata.Close();
   assert(status.ok());
-
   std::filesystem::remove_all(tmp);
   return 0;
 }

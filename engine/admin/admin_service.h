@@ -40,18 +40,21 @@ class AdminService {
   Status SetReadOnlyMode(bool read_only);
   Status StartBackup(const std::string& destination_dir);
   Status RestoreBackup(const std::string& source_dir, bool start_read_only);
+  void InjectRestoreFailureAfterSwapForTest();
 
  private:
   static Status CopyPath(const std::string& from, const std::string& to,
                          bool recursive);
   static Status RemoveIfExists(const std::filesystem::path& path);
   static Status SwapInDirectory(const std::filesystem::path& prepared_source,
-                                const std::filesystem::path& target);
+                                const std::filesystem::path& target,
+                                std::filesystem::path* moved_aside_target);
   static std::string TempPathSuffix(const std::string& prefix);
 
   FeatureEngine* engine_ = nullptr;
   const EngineConfig* config_ = nullptr;
   MetadataStore* metadata_store_ = nullptr;
+  bool fail_restore_after_swap_for_test_ = false;
 };
 
 }  // namespace mxdb

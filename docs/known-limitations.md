@@ -8,3 +8,4 @@
 - Compaction currently rewrites immutable segments and preserves all revisions; advanced pruning is deferred.
 - Backup/restore currently performs filesystem copy and assumes local single-node storage.
 - Python SDK is an embedded thin wrapper over `featurectl`, not a persistent network client yet.
+- `seen_write_ids_` is currently an in-memory, unbounded set (scaling policy for long-lived nodes is not yet implemented).

@@ -38,7 +38,8 @@ void PrintUsage() {
       << "  backup <destination_dir>\n"
       << "  restore <source_dir> [readonly]\n"
       << "  register-feature <tenant> <entity_type> <feature_id> <feature_name> <value_type>\n"
-      << "  ingest <tenant> <entity_type> <entity_id> <feature_id> <event_us> <system_us|auto> <value> <write_id>\n"
+      << "  ingest <tenant> <entity_type> <entity_id> <feature_id> <event_us> <system_us|auto> <value> <write_id> [upsert|delete]\n"
+      << "  get <tenant> <entity_type> <entity_id>\n"
       << "  latest <tenant> <entity_type> <entity_id> <feature_id> [count]\n"
       << "  asof <tenant> <entity_type> <entity_id> <feature_id> <event_cutoff_us> <system_cutoff_us>\n";
 }
@@ -318,6 +319,39 @@ mxdb::StatusOr<std::string> LatestEventsAsJson(
   return out.str();
 }
 
+mxdb::StatusOr<std::string> LatestSnapshotAsJson(
+    const mxdb::LatestQueryResult& latest) {
+  std::ostringstream out;
+  out << "[";
+  for (size_t i = 0; i < latest.features.size(); ++i) {
+    const auto& feature = latest.features[i];
+    if (i > 0) {
+      out << ",";
+    }
+
+    out << "{\"feature_id\":\"" << JsonEscape(feature.feature_id) << "\"";
+    if (!feature.found) {
+      out << ",\"found\":false}";
+      continue;
+    }
+
+    auto value_json = ValueAsJson(feature.value);
+    if (!value_json.ok()) {
+      return value_json.status();
+    }
+
+    out << ",\"found\":true"
+        << ",\"value_type\":\"" << JsonEscape(mxdb::ToString(feature.value.type))
+        << "\""
+        << ",\"value\":" << value_json.value()
+        << ",\"event_time_us\":" << feature.event_time_us
+        << ",\"system_time_us\":" << feature.system_time_us << ",\"lsn\":"
+        << latest.visible_commit.lsn << "}";
+  }
+  out << "]";
+  return out.str();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -420,16 +454,37 @@ int main(int argc, char** argv) {
       return 1;
     }
 
+    mxdb::OperationType operation = mxdb::OperationType::kUpsert;
+    if (argc >= 12) {
+      const std::string op = argv[11];
+      if (op == "upsert") {
+        operation = mxdb::OperationType::kUpsert;
+      } else if (op == "delete") {
+        operation = mxdb::OperationType::kDelete;
+      } else {
+        status =
+            mxdb::Status::InvalidArgument("operation must be upsert or delete");
+        goto done;
+      }
+    }
+
     auto feature = metadata.GetFeatureById(argv[3], argv[6]);
     if (!feature.ok()) {
       status = feature.status();
       goto done;
     }
 
-    auto value = ParseLiteralForType(feature.value().value_type, argv[9]);
-    if (!value.ok()) {
-      status = value.status();
-      goto done;
+    mxdb::FeatureValue value;
+    if (operation == mxdb::OperationType::kDelete) {
+      value.type = feature.value().value_type;
+      value.value = std::monostate{};
+    } else {
+      auto parsed = ParseLiteralForType(feature.value().value_type, argv[9]);
+      if (!parsed.ok()) {
+        status = parsed.status();
+        goto done;
+      }
+      value = parsed.value();
     }
 
     mxdb::EntityFeatureBatch batch;
@@ -441,8 +496,8 @@ int main(int argc, char** argv) {
     if (std::string(argv[8]) != "auto") {
       event.system_time_us = std::stoll(argv[8]);
     }
-    event.value = value.value();
-    event.operation = mxdb::OperationType::kUpsert;
+    event.value = value;
+    event.operation = operation;
     event.write_id = argv[10];
     event.source_id = "featurectl";
     batch.events.push_back(std::move(event));
@@ -456,6 +511,61 @@ int main(int argc, char** argv) {
       std::cout << "accepted_events=" << result.value().accepted_events
                 << " lsn=" << result.value().commit.lsn << "\n";
     }
+  } else if (command == "get") {
+    if (argc < 6) {
+      PrintUsage();
+      return 1;
+    }
+
+    auto features = metadata.ListFeatures(argv[3], std::string(argv[4]));
+    if (!features.ok()) {
+      status = features.status();
+      goto done;
+    }
+    if (features.value().empty()) {
+      std::cout << "found=0 count=0\n";
+      goto done;
+    }
+
+    std::vector<std::string> feature_ids;
+    feature_ids.reserve(features.value().size());
+    for (const auto& feature : features.value()) {
+      feature_ids.push_back(feature.feature_id);
+    }
+
+    mxdb::LatestQueryResult snapshot;
+    auto latest = engine.GetLatest({.tenant_id = argv[3],
+                                    .entity_type = argv[4],
+                                    .entity_id = argv[5]},
+                                   feature_ids);
+    if (latest.ok()) {
+      snapshot = latest.value();
+    } else if (latest.status().code() == mxdb::StatusCode::kNotFound) {
+      snapshot.entity = {.tenant_id = argv[3],
+                         .entity_type = argv[4],
+                         .entity_id = argv[5]};
+      snapshot.visible_commit = {};
+      snapshot.features.reserve(feature_ids.size());
+      for (const auto& feature_id : feature_ids) {
+        mxdb::FeatureValueResult value_result;
+        value_result.feature_id = feature_id;
+        value_result.found = false;
+        snapshot.features.push_back(std::move(value_result));
+      }
+    } else {
+      status = latest.status();
+      goto done;
+    }
+
+    auto snapshot_json = LatestSnapshotAsJson(snapshot);
+    if (!snapshot_json.ok()) {
+      status = snapshot_json.status();
+      goto done;
+    }
+    const std::string values_b64 = Base64Encode(snapshot_json.value());
+    std::cout << "found=1"
+              << " count=" << snapshot.features.size()
+              << " values_b64=" << values_b64 << "\n";
   } else if (command == "latest") {
     if (argc < 7) {
       PrintUsage();

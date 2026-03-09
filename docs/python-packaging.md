@@ -12,8 +12,11 @@ This project ships `mxdb` Python wheels with a bundled native `featurectl` binar
 
 1. explicit `featurectl_bin` argument
 2. `MXDB_FEATURECTL_BIN` environment variable
-3. bundled wheel binary payload (`mxdb/bin/featurectl(.exe).gz`, extracted at runtime)
+3. bundled wheel binary payload (`mxdb/bin/featurectl` or `mxdb/bin/featurectl.exe`)
 4. `featurectl` on `PATH`
+
+Public SDK read/write usage is entity-scoped through
+`MXDBClient.entity(tenant, entity_type, entity_id)`.
 
 ## Local Wheel Build
 

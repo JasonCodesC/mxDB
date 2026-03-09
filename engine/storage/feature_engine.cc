@@ -176,20 +176,23 @@ StatusOr<EntityCommitResult> FeatureEngine::WriteEntityBatch(
     return status;
   }
 
+  EntityCommitResult result;
+  result.entity = batch.entity;
+  result.commit.lsn = lsn;
+  result.commit.commit_system_time_us = commit_system_time_us;
+  result.accepted_events = static_cast<uint32_t>(new_events.size());
+
   status = ApplyCommittedBatch(new_events, true);
   {
     std::unique_lock<std::shared_mutex> lock(mu_);
     ReleaseWriteIdsInflightLocked(reserved_write_ids);
   }
   if (!status.ok()) {
-    return status;
+    // Contract: once WAL append succeeds, the write is treated as committed.
+    // In-memory apply/flush errors are tolerated here and reconciled by WAL recovery.
+    return result;
   }
 
-  EntityCommitResult result;
-  result.entity = batch.entity;
-  result.commit.lsn = lsn;
-  result.commit.commit_system_time_us = commit_system_time_us;
-  result.accepted_events = static_cast<uint32_t>(new_events.size());
   return result;
 }
 
@@ -274,6 +277,10 @@ Status FeatureEngine::TriggerCheckpoint() {
 
 Status FeatureEngine::CompactImmutableSegments() {
   std::unique_lock<std::shared_mutex> lock(mu_);
+  if (read_only_) {
+    return Status::FailedPrecondition(
+        "compaction is disabled while read-only mode is enabled");
+  }
 
   for (size_t partition_id = 0; partition_id < partitions_.size(); ++partition_id) {
     PartitionState& partition = partitions_[partition_id];
@@ -336,6 +343,22 @@ Status FeatureEngine::CompactImmutableSegments() {
 
 Status FeatureEngine::SetReadOnly(bool read_only) {
   std::unique_lock<std::shared_mutex> lock(mu_);
+  if (read_only == read_only_) {
+    return Status::Ok();
+  }
+
+  if (read_only) {
+    // Enter read-only with a flushed in-memory state so serving observes a stable
+    // snapshot backed by immutable segments + latest cache.
+    for (size_t partition_id = 0; partition_id < partitions_.size();
+         ++partition_id) {
+      Status flush = FlushPartitionLocked(partition_id);
+      if (!flush.ok()) {
+        return flush;
+      }
+    }
+  }
+
   read_only_ = read_only;
   return Status::Ok();
 }
@@ -356,6 +379,11 @@ size_t FeatureEngine::SegmentCount() const {
   return count;
 }
 
+void FeatureEngine::InjectFlushFailureForTest(size_t count) {
+  std::unique_lock<std::shared_mutex> lock(mu_);
+  fail_flush_for_test_count_ += count;
+}
+
 StatusOr<LatestQueryResult> FeatureEngine::GetLatest(
     const EntityKey& entity, const std::vector<std::string>& feature_ids,
     std::optional<Lsn> min_visible_lsn) const {
@@ -363,6 +391,10 @@ StatusOr<LatestQueryResult> FeatureEngine::GetLatest(
   result.entity = entity;
 
   std::shared_lock<std::shared_mutex> lock(mu_);
+  Status lifecycle = EnsureStartedForReadLocked();
+  if (!lifecycle.ok()) {
+    return lifecycle;
+  }
   const PartitionState& partition = partitions_[PartitionForEntity(entity)];
 
   auto entity_it = partition.latest_by_entity.find(entity);
@@ -414,6 +446,10 @@ StatusOr<std::vector<FeatureEvent>> FeatureEngine::GetLatestEvents(
   }
 
   std::shared_lock<std::shared_mutex> lock(mu_);
+  Status lifecycle = EnsureStartedForReadLocked();
+  if (!lifecycle.ok()) {
+    return lifecycle;
+  }
   const PartitionState& partition = partitions_[PartitionForEntity(entity)];
   EntityFeatureKey key{entity, feature_id};
 
@@ -444,6 +480,10 @@ StatusOr<std::vector<FeatureEvent>> FeatureEngine::GetLatestEvents(
   if (min_visible_lsn.has_value() && candidates.front().lsn < min_visible_lsn.value()) {
     return Status::FailedPrecondition("latest value does not satisfy min_visible_lsn");
   }
+  if (candidates.front().operation == OperationType::kDelete) {
+    // Contract: latest history returns no values when the latest visible event is a tombstone.
+    return std::vector<FeatureEvent>{};
+  }
 
   std::vector<FeatureEvent> output;
   output.reserve(limit);
@@ -471,6 +511,10 @@ StatusOr<AsOfLookupResult> FeatureEngine::AsOfLookup(
   result.system_cutoff_us = input.system_cutoff_us;
 
   std::shared_lock<std::shared_mutex> lock(mu_);
+  Status lifecycle = EnsureStartedForReadLocked();
+  if (!lifecycle.ok()) {
+    return lifecycle;
+  }
   const PartitionState& partition = partitions_[PartitionForEntity(input.entity)];
 
   for (const auto& feature_id : input.feature_ids) {
@@ -693,6 +737,7 @@ void FeatureEngine::ResetRuntimeStateLocked() {
   seen_write_ids_.clear();
   inflight_write_ids_.clear();
   checkpoint_state_ = CheckpointState{};
+  fail_flush_for_test_count_ = 0;
 
   next_lsn_.store(1);
   next_sequence_no_.store(1);
@@ -700,6 +745,11 @@ void FeatureEngine::ResetRuntimeStateLocked() {
 }
 
 Status FeatureEngine::FlushPartitionLocked(size_t partition_id) {
+  if (fail_flush_for_test_count_ > 0) {
+    --fail_flush_for_test_count_;
+    return Status::Internal("injected flush failure");
+  }
+
   PartitionState& partition = partitions_[partition_id];
   if (partition.memtable_event_count == 0) {
     return Status::Ok();
@@ -771,6 +821,13 @@ Status FeatureEngine::LoadImmutableSegments() {
     }
   }
 
+  return Status::Ok();
+}
+
+Status FeatureEngine::EnsureStartedForReadLocked() const {
+  if (!started_) {
+    return Status::FailedPrecondition("engine is not started");
+  }
   return Status::Ok();
 }
 
